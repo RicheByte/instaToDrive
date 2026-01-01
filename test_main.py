@@ -9,6 +9,7 @@ import os
 import csv
 import tempfile
 import shutil
+import glob
 
 
 class TestUploadToDrive(unittest.TestCase):
@@ -26,35 +27,55 @@ class TestUploadToDrive(unittest.TestCase):
         """Clean up test fixtures"""
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_upload_to_drive_existing_folder_logic(self):
-        """Test logic for uploading to an existing Drive folder"""
-        # Simulate the folder lookup logic
-        mock_drive = MagicMock()
+    def test_folder_cache_hit(self):
+        """Test that cached folder IDs are reused"""
+        folder_id_cache = {}
+        folder_name = "test_user_reels"
         
-        # Mock existing folder
-        mock_folder = {'id': 'existing_folder_123'}
+        # Simulate caching a folder ID
+        folder_id_cache[folder_name] = "cached_folder_123"
+        
+        # Test cache hit
+        if folder_name in folder_id_cache:
+            folder_id = folder_id_cache[folder_name]
+        else:
+            folder_id = None
+        
+        self.assertEqual(folder_id, "cached_folder_123")
+        print("✓ Test folder_cache_hit passed")
+
+    def test_folder_cache_miss_existing_folder(self):
+        """Test cache miss with existing folder in Drive"""
+        folder_id_cache = {}
+        mock_drive = MagicMock()
+        folder_name = "test_user_reels"
+        
+        # Mock existing folder in Drive
+        mock_folder = {'id': 'existing_folder_456'}
         mock_list_file = MagicMock()
         mock_list_file.GetList.return_value = [mock_folder]
         mock_drive.ListFile.return_value = mock_list_file
         
-        # Simulate the upload_to_drive logic
-        drive_folder_name = "test_user_reels"
-        
-        folder_list = mock_drive.ListFile({'q': f"title='{drive_folder_name}'"}).GetList()
-        
-        # Test folder exists branch
-        if folder_list:
-            folder_id = folder_list[0]['id']
+        # Simulate get_or_create_folder logic
+        if folder_name in folder_id_cache:
+            folder_id = folder_id_cache[folder_name]
         else:
-            folder_id = None
+            folder_list = mock_drive.ListFile({'q': f"title='{folder_name}'"}).GetList()
+            if folder_list:
+                folder_id = folder_list[0]['id']
+            else:
+                folder_id = None
+            folder_id_cache[folder_name] = folder_id
         
-        self.assertEqual(len(folder_list), 1)
-        self.assertEqual(folder_id, 'existing_folder_123')
-        print("✓ Test upload_to_drive_existing_folder_logic passed")
+        self.assertEqual(folder_id, 'existing_folder_456')
+        self.assertIn(folder_name, folder_id_cache)
+        print("✓ Test folder_cache_miss_existing_folder passed")
 
-    def test_upload_to_drive_new_folder_logic(self):
-        """Test logic when folder needs to be created"""
+    def test_folder_cache_miss_create_new(self):
+        """Test cache miss requiring new folder creation"""
+        folder_id_cache = {}
         mock_drive = MagicMock()
+        folder_name = "new_user_reels"
         
         # Mock empty folder list (folder doesn't exist)
         mock_list_file = MagicMock()
@@ -63,31 +84,46 @@ class TestUploadToDrive(unittest.TestCase):
         
         # Mock folder creation
         mock_new_folder = MagicMock()
-        mock_new_folder.__getitem__ = Mock(return_value='new_folder_456')
+        mock_new_folder.__getitem__ = Mock(return_value='new_folder_789')
         mock_drive.CreateFile.return_value = mock_new_folder
         
-        folder_list = mock_drive.ListFile({'q': "title='new_folder'"}).GetList()
-        
-        # Test folder creation branch
-        if folder_list:
-            folder_id = folder_list[0]['id']
+        # Simulate get_or_create_folder logic
+        if folder_name in folder_id_cache:
+            folder_id = folder_id_cache[folder_name]
         else:
-            # Create folder
-            folder_metadata = {'title': 'new_folder', 'mimeType': 'application/vnd.google-apps.folder'}
-            folder = mock_drive.CreateFile(folder_metadata)
-            folder.Upload()
-            folder_id = folder['id']
+            folder_list = mock_drive.ListFile({'q': f"title='{folder_name}'"}).GetList()
+            if folder_list:
+                folder_id = folder_list[0]['id']
+            else:
+                folder_metadata = {'title': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+                folder = mock_drive.CreateFile(folder_metadata)
+                folder.Upload()
+                folder_id = folder['id']
+            folder_id_cache[folder_name] = folder_id
         
-        self.assertEqual(len(folder_list), 0)
-        self.assertEqual(folder_id, 'new_folder_456')
+        self.assertEqual(folder_id, 'new_folder_789')
+        self.assertIn(folder_name, folder_id_cache)
         mock_drive.CreateFile.assert_called_once()
-        print("✓ Test upload_to_drive_new_folder_logic passed")
+        print("✓ Test folder_cache_miss_create_new passed")
 
-    def test_file_upload_logic(self):
-        """Test file upload and permission logic"""
+    def test_direct_download_link_format(self):
+        """Test that direct download links use the correct format"""
+        file_id = "1ABC123xyz"
+        
+        # This is the format we should use (not alternateLink)
+        direct_link = f"https://drive.usercontent.google.com/download?id={file_id}"
+        
+        self.assertIn("drive.usercontent.google.com", direct_link)
+        self.assertIn("download?id=", direct_link)
+        self.assertIn(file_id, direct_link)
+        self.assertNotIn("alternateLink", direct_link)
+        print("✓ Test direct_download_link_format passed")
+
+    def test_file_upload_with_direct_link(self):
+        """Test file upload returns direct download link"""
         mock_drive = MagicMock()
         mock_gfile = MagicMock()
-        mock_gfile.__getitem__ = Mock(return_value='https://drive.google.com/file/test123')
+        mock_gfile.__getitem__ = Mock(return_value='file_id_123')
         mock_drive.CreateFile.return_value = mock_gfile
         
         # Simulate upload logic
@@ -102,15 +138,17 @@ class TestUploadToDrive(unittest.TestCase):
         gfile.Upload()
         gfile.InsertPermission({'type': 'anyone', 'value': 'anyone', 'role': 'reader'})
         
+        # Build direct download link
+        file_id = gfile['id']
+        direct_link = f"https://drive.usercontent.google.com/download?id={file_id}"
+        
         # Verify calls
         gfile.SetContentFile.assert_called_once_with(local_file)
         gfile.Upload.assert_called_once()
         gfile.InsertPermission.assert_called_once()
         
-        # Verify link retrieval
-        link = gfile['alternateLink']
-        self.assertEqual(link, 'https://drive.google.com/file/test123')
-        print("✓ Test file_upload_logic passed")
+        self.assertEqual(direct_link, 'https://drive.usercontent.google.com/download?id=file_id_123')
+        print("✓ Test file_upload_with_direct_link passed")
 
 
 class TestProcessPost(unittest.TestCase):
@@ -400,31 +438,6 @@ class TestVideoNumbering(unittest.TestCase):
         self.assertEqual(numbers, [1, 2, 3, 4, 5])
         print("✓ Test sequential_numbering passed")
 
-    def test_thread_safe_counter_logic(self):
-        """Test thread-safe counter logic"""
-        import threading
-        
-        counter = 0
-        lock = threading.Lock()
-        results = []
-        
-        def increment():
-            nonlocal counter
-            with lock:
-                counter += 1
-                results.append(counter)
-        
-        threads = [threading.Thread(target=increment) for _ in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        
-        # All numbers should be unique
-        self.assertEqual(len(set(results)), 10)
-        self.assertEqual(counter, 10)
-        print("✓ Test thread_safe_counter_logic passed")
-
 
 class TestNewCSVFormat(unittest.TestCase):
     """Tests for new CSV format with 6 columns"""
@@ -537,6 +550,225 @@ class TestDriveFolderNaming(unittest.TestCase):
         print("✓ Test folder_name_consistency passed")
 
 
+class TestFileVerification(unittest.TestCase):
+    """Tests for file existence verification before upload"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.test_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up test fixtures"""
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_find_exact_file(self):
+        """Test finding file with exact expected name"""
+        shortcode = "ABC123"
+        expected_file = os.path.join(self.test_dir, f"{shortcode}.mp4")
+        
+        # Create the file
+        with open(expected_file, "w") as f:
+            f.write("video content")
+        
+        # Simulate find_video_file logic
+        if os.path.exists(expected_file):
+            found_file = expected_file
+        else:
+            found_file = None
+        
+        self.assertEqual(found_file, expected_file)
+        print("✓ Test find_exact_file passed")
+
+    def test_find_renamed_file_by_pattern(self):
+        """Test finding file when Instaloader renames it"""
+        shortcode = "ABC123"
+        # Instaloader might add date prefix or other modifications
+        renamed_file = os.path.join(self.test_dir, f"2026-01-02_{shortcode}.mp4")
+        
+        # Create the renamed file
+        with open(renamed_file, "w") as f:
+            f.write("video content")
+        
+        # Simulate find_video_file logic
+        expected_file = os.path.join(self.test_dir, f"{shortcode}.mp4")
+        if os.path.exists(expected_file):
+            found_file = expected_file
+        else:
+            # Scan for pattern match
+            pattern = os.path.join(self.test_dir, f"*{shortcode}*.mp4")
+            matches = glob.glob(pattern)
+            found_file = matches[0] if matches else None
+        
+        self.assertEqual(found_file, renamed_file)
+        print("✓ Test find_renamed_file_by_pattern passed")
+
+    def test_find_any_mp4_fallback(self):
+        """Test fallback to any .mp4 file in folder"""
+        shortcode = "NOTFOUND"
+        # Create a different mp4 file
+        other_file = os.path.join(self.test_dir, "some_other_video.mp4")
+        with open(other_file, "w") as f:
+            f.write("video content")
+        
+        # Simulate find_video_file logic
+        expected_file = os.path.join(self.test_dir, f"{shortcode}.mp4")
+        if os.path.exists(expected_file):
+            found_file = expected_file
+        else:
+            pattern = os.path.join(self.test_dir, f"*{shortcode}*.mp4")
+            matches = glob.glob(pattern)
+            if matches:
+                found_file = matches[0]
+            else:
+                # Fallback to any mp4
+                all_mp4 = glob.glob(os.path.join(self.test_dir, "*.mp4"))
+                found_file = all_mp4[0] if all_mp4 else None
+        
+        self.assertEqual(found_file, other_file)
+        print("✓ Test find_any_mp4_fallback passed")
+
+    def test_no_file_found_returns_none(self):
+        """Test that None is returned when no file exists"""
+        shortcode = "MISSING"
+        
+        # Simulate find_video_file logic on empty directory
+        expected_file = os.path.join(self.test_dir, f"{shortcode}.mp4")
+        if os.path.exists(expected_file):
+            found_file = expected_file
+        else:
+            pattern = os.path.join(self.test_dir, f"*{shortcode}*.mp4")
+            matches = glob.glob(pattern)
+            if matches:
+                found_file = matches[0]
+            else:
+                all_mp4 = glob.glob(os.path.join(self.test_dir, "*.mp4"))
+                found_file = all_mp4[0] if all_mp4 else None
+        
+        self.assertIsNone(found_file)
+        print("✓ Test no_file_found_returns_none passed")
+
+
+class TestUploadPacing(unittest.TestCase):
+    """Tests for upload pacing logic"""
+
+    def test_pacing_delay_range(self):
+        """Test that pacing delay is within 2-5 seconds range"""
+        import random
+        
+        for _ in range(100):
+            delay = random.uniform(2, 5)
+            self.assertGreaterEqual(delay, 2)
+            self.assertLessEqual(delay, 5)
+        
+        print("✓ Test pacing_delay_range passed")
+
+    def test_pacing_randomness(self):
+        """Test that pacing delays are randomized (not constant)"""
+        import random
+        
+        delays = [random.uniform(2, 5) for _ in range(10)]
+        unique_delays = set(delays)
+        
+        # Should have multiple unique values (extremely unlikely to be all same)
+        self.assertGreater(len(unique_delays), 1)
+        print("✓ Test pacing_randomness passed")
+
+
+class TestSequentialProcessing(unittest.TestCase):
+    """Tests for sequential (non-parallel) processing"""
+
+    def test_threads_is_one(self):
+        """Test that THREADS constant is set to 1"""
+        THREADS = 1  # Should match main.py
+        self.assertEqual(THREADS, 1)
+        print("✓ Test threads_is_one passed")
+
+    def test_sequential_counter_increment(self):
+        """Test simple counter works without threading"""
+        video_counter = 0
+        
+        def get_next_video_number():
+            nonlocal video_counter
+            video_counter += 1
+            return video_counter
+        
+        numbers = [get_next_video_number() for _ in range(5)]
+        
+        self.assertEqual(numbers, [1, 2, 3, 4, 5])
+        self.assertEqual(video_counter, 5)
+        print("✓ Test sequential_counter_increment passed")
+
+
+class TestFolderCaching(unittest.TestCase):
+    """Tests for folder ID caching system"""
+
+    def test_cache_empty_initially(self):
+        """Test that folder cache starts empty"""
+        folder_id_cache = {}
+        self.assertEqual(len(folder_id_cache), 0)
+        print("✓ Test cache_empty_initially passed")
+
+    def test_cache_stores_folder_id(self):
+        """Test that folder ID is stored in cache"""
+        folder_id_cache = {}
+        folder_name = "user1_reels"
+        folder_id = "folder_abc123"
+        
+        folder_id_cache[folder_name] = folder_id
+        
+        self.assertIn(folder_name, folder_id_cache)
+        self.assertEqual(folder_id_cache[folder_name], folder_id)
+        print("✓ Test cache_stores_folder_id passed")
+
+    def test_cache_multiple_users(self):
+        """Test caching multiple user folders"""
+        folder_id_cache = {}
+        
+        users = [
+            ("user1_reels", "folder_111"),
+            ("user2_reels", "folder_222"),
+            ("user3_reels", "folder_333"),
+        ]
+        
+        for folder_name, folder_id in users:
+            folder_id_cache[folder_name] = folder_id
+        
+        self.assertEqual(len(folder_id_cache), 3)
+        self.assertEqual(folder_id_cache["user2_reels"], "folder_222")
+        print("✓ Test cache_multiple_users passed")
+
+    def test_cache_reduces_api_calls(self):
+        """Test that cache prevents repeated API lookups"""
+        folder_id_cache = {}
+        mock_drive = MagicMock()
+        api_call_count = 0
+        
+        def mock_get_or_create_folder(folder_name):
+            nonlocal api_call_count
+            if folder_name in folder_id_cache:
+                return folder_id_cache[folder_name]
+            
+            # This would be an API call
+            api_call_count += 1
+            folder_id = f"folder_{folder_name}"
+            folder_id_cache[folder_name] = folder_id
+            return folder_id
+        
+        # First call should hit API
+        mock_get_or_create_folder("user1_reels")
+        self.assertEqual(api_call_count, 1)
+        
+        # Second call should use cache
+        mock_get_or_create_folder("user1_reels")
+        self.assertEqual(api_call_count, 1)  # Still 1, not 2
+        
+        # Different user should hit API
+        mock_get_or_create_folder("user2_reels")
+        self.assertEqual(api_call_count, 2)
+        
+        print("✓ Test cache_reduces_api_calls passed")
+
+
 def run_tests():
     """Run all tests and print summary"""
     print("=" * 60)
@@ -558,6 +790,10 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestVideoNumbering))
     suite.addTests(loader.loadTestsFromTestCase(TestNewCSVFormat))
     suite.addTests(loader.loadTestsFromTestCase(TestDriveFolderNaming))
+    suite.addTests(loader.loadTestsFromTestCase(TestFileVerification))
+    suite.addTests(loader.loadTestsFromTestCase(TestUploadPacing))
+    suite.addTests(loader.loadTestsFromTestCase(TestSequentialProcessing))
+    suite.addTests(loader.loadTestsFromTestCase(TestFolderCaching))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

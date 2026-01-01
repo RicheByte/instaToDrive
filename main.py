@@ -8,6 +8,7 @@ import random
 import glob
 import re
 import unicodedata
+from datetime import datetime, timedelta
 
 # Simple counter for video numbering (sequential processing)
 video_counter = 0
@@ -69,24 +70,54 @@ if USE_LOGIN:
 else:
     print("Running without Instagram login (public profiles only)")
 
-# --- Files ---
-LINKS_FILE = "links.txt"
-OUTPUT_CSV = "reels_drive_links.csv"
-PROCESSED_FILE = "processed_posts.txt"
-FAILED_FILE = "failed_posts.txt"  # Track failed posts for retry
+# --- Files & Niche Configuration ---
+# 5 niches with separate input/output files
+NICHES = {
+    "niche1": {
+        "links_file": "links_niche1.txt",
+        "output_csv": "reels_niche1.csv",
+        "processed_file": "processed_niche1.txt",
+        "failed_file": "failed_niche1.txt",
+        "drive_folder": "niche1_reels",  # All videos from this niche go here
+    },
+    "niche2": {
+        "links_file": "links_niche2.txt",
+        "output_csv": "reels_niche2.csv",
+        "processed_file": "processed_niche2.txt",
+        "failed_file": "failed_niche2.txt",
+        "drive_folder": "niche2_reels",
+    },
+    "niche3": {
+        "links_file": "links_niche3.txt",
+        "output_csv": "reels_niche3.csv",
+        "processed_file": "processed_niche3.txt",
+        "failed_file": "failed_niche3.txt",
+        "drive_folder": "niche3_reels",
+    },
+    "niche4": {
+        "links_file": "links_niche4.txt",
+        "output_csv": "reels_niche4.csv",
+        "processed_file": "processed_niche4.txt",
+        "failed_file": "failed_niche4.txt",
+        "drive_folder": "niche4_reels",
+    },
+    "niche5": {
+        "links_file": "links_niche5.txt",
+        "output_csv": "reels_niche5.csv",
+        "processed_file": "processed_niche5.txt",
+        "failed_file": "failed_niche5.txt",
+        "drive_folder": "niche5_reels",
+    },
+}
+
+# Time between processing each niche (in seconds)
+NICHE_DELAY_HOURS = 1
+NICHE_DELAY_SECONDS = NICHE_DELAY_HOURS * 3600
+
 RETRIES = 3
 THREADS = 1  # Sequential processing - safer for Drive API
 
-# Ensure processed posts tracking file exists
-if not os.path.exists(PROCESSED_FILE):
-    open(PROCESSED_FILE, "w").close()
-
-# Ensure failed posts tracking file exists
-if not os.path.exists(FAILED_FILE):
-    open(FAILED_FILE, "w").close()
-
-with open(PROCESSED_FILE, "r") as f:
-    processed_posts = set(line.strip() for line in f if line.strip())
+# File initialization moved to process_niche() function
 
 # --- Text Normalization ---
 def normalize_text(text):
@@ -165,20 +196,7 @@ def format_for_pinterest(caption, drive_link):
     
     return pin_title, pin_description
 
-# Initialize CSV with headers if it doesn't exist
-if not os.path.exists(OUTPUT_CSV):
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([
-            # Original tracking columns
-            "No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link",
-            # Pinterest columns
-            "title", "description", "link", "board", "media_url"
-        ])
-
-# Read profile links
-with open(LINKS_FILE, "r") as f:
-    links = [line.strip() for line in f if line.strip()]
+# CSV initialization moved to process_niche() function
 
 # Function to find actual video file (Instaloader may rename)
 def find_video_file(target_folder, shortcode):
@@ -226,7 +244,7 @@ def upload_to_drive(local_file, drive_folder_name, video_number, username):
     return direct_link, numbered_filename
 
 # Function to download + upload a single post with retries
-def process_post(args):
+def process_post(args, niche_config, processed_posts):
     username, post = args
     if post.shortcode in processed_posts:
         return
@@ -234,8 +252,9 @@ def process_post(args):
     # Get video number
     video_number = get_next_video_number()
     
-    target_folder = f"{username}_reels"
-    drive_folder = f"{username}_reels"
+    # Use niche-based Drive folder (not username-based)
+    target_folder = f"{niche_config['drive_folder']}_local"  # Local temp folder
+    drive_folder = niche_config['drive_folder']  # Drive folder name
     os.makedirs(target_folder, exist_ok=True)
     
     last_error = None  # Track last error for failure logging
@@ -265,7 +284,7 @@ def process_post(args):
             # Pinterest formatted title and description
             pin_title, pin_description = format_for_pinterest(full_caption, drive_link)
             
-            with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as csvfile:
+            with open(niche_config['output_csv'], "a", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
                     # Original tracking columns
@@ -284,7 +303,7 @@ def process_post(args):
                 ])
 
             # Mark as processed
-            with open(PROCESSED_FILE, "a") as f:
+            with open(niche_config['processed_file'], "a") as f:
                 f.write(post.shortcode + "\n")
 
             # Delete local file
@@ -301,20 +320,149 @@ def process_post(args):
     
     # === ALL RETRIES FAILED - LOG TO FAILED FILE ===
     print(f"[{video_number:03d}] FAILED permanently: {username}/{post.shortcode}")
-    with open(FAILED_FILE, "a", encoding="utf-8") as f:
+    with open(niche_config['failed_file'], "a", encoding="utf-8") as f:
         f.write(f"{username},{post.shortcode},{last_error}\n")
 
-# --- Collect all video posts ---
-all_videos = []
-for link in links:
-    username = link.rstrip("/").split("/")[-1]
-    profile = instaloader.Profile.from_username(L.context, username)
-    for post in profile.get_posts():
-        if post.is_video and post.shortcode not in processed_posts:
-            all_videos.append((username, post))
+def process_niche(niche_name, niche_config):
+    """Process all videos for a single niche"""
+    global video_counter
+    video_counter = 0  # Reset counter for each niche
+    
+    print("\n" + "=" * 60)
+    print(f"PROCESSING NICHE: {niche_name}")
+    print(f"Links file: {niche_config['links_file']}")
+    print(f"Drive folder: {niche_config['drive_folder']}")
+    print(f"Output CSV: {niche_config['output_csv']}")
+    print("=" * 60)
+    
+    # Check if links file exists
+    if not os.path.exists(niche_config['links_file']):
+        print(f"WARNING: {niche_config['links_file']} not found. Skipping niche.")
+        return 0
+    
+    # Ensure tracking files exist
+    if not os.path.exists(niche_config['processed_file']):
+        open(niche_config['processed_file'], "w").close()
+    if not os.path.exists(niche_config['failed_file']):
+        open(niche_config['failed_file'], "w").close()
+    
+    # Load processed posts for this niche
+    with open(niche_config['processed_file'], "r") as f:
+        processed_posts = set(line.strip() for line in f if line.strip())
+    
+    # Initialize CSV with headers if it doesn't exist
+    if not os.path.exists(niche_config['output_csv']):
+        with open(niche_config['output_csv'], "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([
+                "No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link",
+                "title", "description", "link", "board", "media_url"
+            ])
+    
+    # Read profile links for this niche
+    with open(niche_config['links_file'], "r") as f:
+        links = [line.strip() for line in f if line.strip()]
+    
+    if not links:
+        print(f"No links found in {niche_config['links_file']}. Skipping.")
+        return 0
+    
+    # Collect all video posts for this niche
+    all_videos = []
+    for link in links:
+        try:
+            username = link.rstrip("/").split("/")[-1]
+            print(f"Fetching posts from @{username}...")
+            profile = instaloader.Profile.from_username(L.context, username)
+            for post in profile.get_posts():
+                if post.is_video and post.shortcode not in processed_posts:
+                    all_videos.append((username, post))
+        except Exception as e:
+            print(f"Error fetching profile {link}: {e}")
+    
+    if not all_videos:
+        print(f"No new videos to process for {niche_name}.")
+        return 0
+    
+    # Process videos sequentially
+    print(f"\nProcessing {len(all_videos)} videos for {niche_name}...")
+    for i, video_args in enumerate(all_videos, 1):
+        print(f"\n[{i}/{len(all_videos)}] Processing {video_args[0]}/{video_args[1].shortcode}")
+        process_post(video_args, niche_config, processed_posts)
+    
+    return len(all_videos)
 
-# --- Process sequentially (safer for Drive API) ---
-print(f"Processing {len(all_videos)} videos sequentially...")
-for i, video_args in enumerate(all_videos, 1):
-    print(f"\n[{i}/{len(all_videos)}] Processing {video_args[0]}/{video_args[1].shortcode}")
-    process_post(video_args)
+
+def run_all_niches(with_delay=True):
+    """Run all niches with optional 1-hour delay between each"""
+    niche_list = list(NICHES.items())
+    total_niches = len(niche_list)
+    
+    print("\n" + "#" * 60)
+    print("INSTAGRAM TO DRIVE - MULTI-NICHE PROCESSOR")
+    print(f"Processing {total_niches} niches")
+    if with_delay:
+        print(f"Delay between niches: {NICHE_DELAY_HOURS} hour(s)")
+    print("#" * 60)
+    
+    for idx, (niche_name, niche_config) in enumerate(niche_list):
+        # Calculate and display timing
+        start_time = datetime.now()
+        print(f"\n[{idx+1}/{total_niches}] Starting {niche_name} at {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Process this niche
+        videos_processed = process_niche(niche_name, niche_config)
+        
+        end_time = datetime.now()
+        print(f"\nCompleted {niche_name}: {videos_processed} videos processed")
+        print(f"Finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Wait before next niche (except for the last one)
+        if with_delay and idx < total_niches - 1:
+            next_niche = niche_list[idx + 1][0]
+            next_start = datetime.now() + timedelta(seconds=NICHE_DELAY_SECONDS)
+            print(f"\n⏰ Waiting {NICHE_DELAY_HOURS} hour(s) before processing {next_niche}...")
+            print(f"Next niche will start at: {next_start.strftime('%Y-%m-%d %H:%M:%S')}")
+            time.sleep(NICHE_DELAY_SECONDS)
+    
+    print("\n" + "#" * 60)
+    print("ALL NICHES COMPLETED!")
+    print("#" * 60)
+
+
+# --- Main Entry Point ---
+if __name__ == "__main__":
+    import sys
+    
+    # Check for command line arguments
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        
+        if arg == "--no-delay":
+            # Process all niches without delay (for testing)
+            print("Running without delay between niches...")
+            run_all_niches(with_delay=False)
+        
+        elif arg.startswith("--niche="):
+            # Process single niche: python main.py --niche=niche1
+            niche_name = arg.split("=")[1]
+            if niche_name in NICHES:
+                process_niche(niche_name, NICHES[niche_name])
+            else:
+                print(f"Unknown niche: {niche_name}")
+                print(f"Available niches: {', '.join(NICHES.keys())}")
+        
+        elif arg == "--help":
+            print("Usage:")
+            print("  python main.py              - Process all niches with 1-hour delay")
+            print("  python main.py --no-delay   - Process all niches without delay")
+            print("  python main.py --niche=X    - Process single niche (niche1-niche5)")
+            print("  python main.py --help       - Show this help")
+        
+        else:
+            print(f"Unknown argument: {arg}")
+            print("Use --help for usage information.")
+    
+    else:
+        # Default: process all niches with delay
+        run_all_niches(with_delay=True)

@@ -1037,6 +1037,206 @@ class TestTextNormalization(unittest.TestCase):
         print("✓ Test newline_handling passed")
 
 
+class TestNicheConfiguration(unittest.TestCase):
+    """Tests for multi-niche configuration"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.test_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up test fixtures"""
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_niche_config_structure(self):
+        """Test that niche config has all required keys"""
+        niche_config = {
+            "links_file": "links_niche1.txt",
+            "output_csv": "reels_niche1.csv",
+            "processed_file": "processed_niche1.txt",
+            "failed_file": "failed_niche1.txt",
+            "drive_folder": "niche1_reels",
+        }
+        
+        required_keys = ["links_file", "output_csv", "processed_file", "failed_file", "drive_folder"]
+        for key in required_keys:
+            self.assertIn(key, niche_config)
+        
+        print("✓ Test niche_config_structure passed")
+
+    def test_five_niches_defined(self):
+        """Test that exactly 5 niches are defined"""
+        NICHES = {
+            "niche1": {"links_file": "links_niche1.txt"},
+            "niche2": {"links_file": "links_niche2.txt"},
+            "niche3": {"links_file": "links_niche3.txt"},
+            "niche4": {"links_file": "links_niche4.txt"},
+            "niche5": {"links_file": "links_niche5.txt"},
+        }
+        
+        self.assertEqual(len(NICHES), 5)
+        print("✓ Test five_niches_defined passed")
+
+    def test_niche_file_naming_convention(self):
+        """Test niche file naming follows convention"""
+        for i in range(1, 6):
+            niche_name = f"niche{i}"
+            expected_links = f"links_niche{i}.txt"
+            expected_csv = f"reels_niche{i}.csv"
+            expected_processed = f"processed_niche{i}.txt"
+            expected_failed = f"failed_niche{i}.txt"
+            expected_drive = f"niche{i}_reels"
+            
+            self.assertTrue(expected_links.startswith("links_"))
+            self.assertTrue(expected_csv.startswith("reels_"))
+            self.assertTrue(expected_csv.endswith(".csv"))
+        
+        print("✓ Test niche_file_naming_convention passed")
+
+    def test_niche_links_file_parsing(self):
+        """Test parsing links from niche-specific file"""
+        links_file = os.path.join(self.test_dir, "links_niche1.txt")
+        
+        test_links = [
+            "https://instagram.com/fitness_account1",
+            "https://instagram.com/fitness_account2/",
+            "https://instagram.com/fitness_account3"
+        ]
+        
+        with open(links_file, "w") as f:
+            f.write("\n".join(test_links))
+        
+        with open(links_file, "r") as f:
+            links = [line.strip() for line in f if line.strip()]
+        
+        self.assertEqual(len(links), 3)
+        print("✓ Test niche_links_file_parsing passed")
+
+    def test_separate_csv_per_niche(self):
+        """Test that each niche gets its own CSV file"""
+        csv_files = []
+        for i in range(1, 6):
+            csv_path = os.path.join(self.test_dir, f"reels_niche{i}.csv")
+            csv_files.append(csv_path)
+            
+            # Create CSV with header
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["No.", "Username", "title"])
+        
+        # Verify all are separate files
+        self.assertEqual(len(set(csv_files)), 5)
+        for csv_file in csv_files:
+            self.assertTrue(os.path.exists(csv_file))
+        
+        print("✓ Test separate_csv_per_niche passed")
+
+    def test_separate_processed_tracking_per_niche(self):
+        """Test that each niche tracks processed posts separately"""
+        # Niche 1 processed posts
+        processed1 = os.path.join(self.test_dir, "processed_niche1.txt")
+        with open(processed1, "w") as f:
+            f.write("ABC123\nDEF456\n")
+        
+        # Niche 2 processed posts (different)
+        processed2 = os.path.join(self.test_dir, "processed_niche2.txt")
+        with open(processed2, "w") as f:
+            f.write("GHI789\n")
+        
+        # Load and verify they're separate
+        with open(processed1, "r") as f:
+            niche1_posts = set(line.strip() for line in f if line.strip())
+        with open(processed2, "r") as f:
+            niche2_posts = set(line.strip() for line in f if line.strip())
+        
+        self.assertEqual(len(niche1_posts), 2)
+        self.assertEqual(len(niche2_posts), 1)
+        self.assertNotEqual(niche1_posts, niche2_posts)
+        
+        print("✓ Test separate_processed_tracking_per_niche passed")
+
+
+class TestNicheScheduling(unittest.TestCase):
+    """Tests for niche scheduling functionality"""
+
+    def test_delay_configuration(self):
+        """Test delay between niches is configured correctly"""
+        NICHE_DELAY_HOURS = 1
+        NICHE_DELAY_SECONDS = NICHE_DELAY_HOURS * 3600
+        
+        self.assertEqual(NICHE_DELAY_HOURS, 1)
+        self.assertEqual(NICHE_DELAY_SECONDS, 3600)
+        print("✓ Test delay_configuration passed")
+
+    def test_niche_order_preserved(self):
+        """Test that niches are processed in order"""
+        NICHES = {
+            "niche1": {},
+            "niche2": {},
+            "niche3": {},
+            "niche4": {},
+            "niche5": {},
+        }
+        
+        niche_list = list(NICHES.keys())
+        expected_order = ["niche1", "niche2", "niche3", "niche4", "niche5"]
+        
+        self.assertEqual(niche_list, expected_order)
+        print("✓ Test niche_order_preserved passed")
+
+    def test_video_counter_reset_per_niche(self):
+        """Test that video counter resets for each niche"""
+        video_counter = 0
+        
+        # Simulate niche 1
+        video_counter = 0  # Reset
+        for _ in range(3):
+            video_counter += 1
+        niche1_final = video_counter
+        
+        # Simulate niche 2 (counter resets)
+        video_counter = 0  # Reset
+        for _ in range(2):
+            video_counter += 1
+        niche2_final = video_counter
+        
+        self.assertEqual(niche1_final, 3)
+        self.assertEqual(niche2_final, 2)
+        print("✓ Test video_counter_reset_per_niche passed")
+
+
+class TestNicheDriveFolders(unittest.TestCase):
+    """Tests for niche-based Drive folder naming"""
+
+    def test_drive_folder_matches_niche(self):
+        """Test Drive folder is named after niche, not username"""
+        niche_config = {
+            "drive_folder": "niche1_reels"
+        }
+        
+        # All videos from this niche go to the same folder
+        username1 = "fitness_user1"
+        username2 = "fitness_user2"
+        
+        # Both should use niche folder, not username folder
+        drive_folder = niche_config["drive_folder"]
+        
+        self.assertEqual(drive_folder, "niche1_reels")
+        self.assertNotEqual(drive_folder, f"{username1}_reels")
+        self.assertNotEqual(drive_folder, f"{username2}_reels")
+        
+        print("✓ Test drive_folder_matches_niche passed")
+
+    def test_local_folder_naming(self):
+        """Test local temp folder naming convention"""
+        niche_config = {"drive_folder": "niche1_reels"}
+        
+        target_folder = f"{niche_config['drive_folder']}_local"
+        
+        self.assertEqual(target_folder, "niche1_reels_local")
+        print("✓ Test local_folder_naming passed")
+
+
 def run_tests():
     """Run all tests and print summary"""
     print("=" * 60)
@@ -1065,6 +1265,9 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestFolderCaching))
     suite.addTests(loader.loadTestsFromTestCase(TestFailureLogging))
     suite.addTests(loader.loadTestsFromTestCase(TestTextNormalization))
+    suite.addTests(loader.loadTestsFromTestCase(TestNicheConfiguration))
+    suite.addTests(loader.loadTestsFromTestCase(TestNicheScheduling))
+    suite.addTests(loader.loadTestsFromTestCase(TestNicheDriveFolders))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

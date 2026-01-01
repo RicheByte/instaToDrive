@@ -1,0 +1,6 @@
+# Niche 4 - Example: Fashion accounts
+# Add Instagram profile URLs below (one per line)
+# Example:
+# https://www.instagram.com/fashion_account1
+# https://www.instagram.com/style_account2
+

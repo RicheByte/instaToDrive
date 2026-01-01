@@ -1,0 +1,6 @@
+# Niche 3 - Example: Travel accounts
+# Add Instagram profile URLs below (one per line)
+# Example:
+# https://www.instagram.com/travel_account1
+# https://www.instagram.com/wanderlust_account2
+

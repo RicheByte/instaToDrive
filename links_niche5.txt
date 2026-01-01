@@ -1,0 +1,6 @@
+# Niche 5 - Example: DIY/Crafts accounts
+# Add Instagram profile URLs below (one per line)
+# Example:
+# https://www.instagram.com/diy_account1
+# https://www.instagram.com/crafts_account2
+

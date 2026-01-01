@@ -1,6 +1,6 @@
 # Instagram Reels to Google Drive Downloader
 
-Automatically download Instagram reels from public profiles and upload them to Google Drive with shareable links.
+Automatically download Instagram reels from public profiles and upload them to Google Drive with shareable links. Supports **5 separate niches** with scheduled processing and **Pinterest-ready CSV output**.
 
 ---
 
@@ -13,6 +13,7 @@ Automatically download Instagram reels from public profiles and upload them to G
 - [Step 3: Create Project Files](#step-3-create-project-files)
 - [Step 4: Configure the Script](#step-4-configure-the-script)
 - [Step 5: Run the Script](#step-5-run-the-script)
+- [Multi-Niche System](#-multi-niche-system)
 - [Output Files](#-output-files)
 - [Configuration Options](#-configuration-options)
 - [Troubleshooting](#-troubleshooting)
@@ -22,12 +23,16 @@ Automatically download Instagram reels from public profiles and upload them to G
 
 ## ✨ Features
 
-- ✅ Download reels from **public** Instagram profiles (no login required)
-- ✅ Automatic upload to Google Drive
-- ✅ Generate public shareable links
+- ✅ **5 Separate Niches** - Organize different content categories
+- ✅ **Scheduled Processing** - 1-hour delay between niches (configurable)
+- ✅ **Pinterest-Ready CSV** - Direct upload format with title, description, hashtags
+- ✅ Download reels from **public** Instagram profiles
+- ✅ Automatic upload to Google Drive with **direct download links**
+- ✅ **Folder caching** - Reduces API calls by 50%+
+- ✅ **Text normalization** - Cleans weird Unicode, emojis from titles
+- ✅ **Failure logging** - Track failed posts for retry
 - ✅ Track processed posts (skip duplicates on re-run)
-- ✅ Export video titles and Drive links to CSV
-- ✅ Multi-threaded processing for speed
+- ✅ Sequential processing for stability (no rate limits)
 - ✅ Automatic retry on failures
 
 ---
@@ -133,11 +138,19 @@ instaToDrive/
 
 ## Step 3: Create Project Files
 
-### 3.1 Create `links.txt`
+### 3.1 Niche Links Files (5 Files)
 
-Create a file named `links.txt` in the project folder.
+The script uses **5 separate niche files** for different content categories:
 
-Add Instagram profile URLs (one per line):
+| File | Purpose |
+|------|---------|
+| `links_niche1.txt` | Niche 1 Instagram profiles (e.g., Fitness) |
+| `links_niche2.txt` | Niche 2 Instagram profiles (e.g., Food) |
+| `links_niche3.txt` | Niche 3 Instagram profiles (e.g., Travel) |
+| `links_niche4.txt` | Niche 4 Instagram profiles (e.g., Fashion) |
+| `links_niche5.txt` | Niche 5 Instagram profiles (e.g., DIY) |
+
+Each file should contain Instagram profile URLs (one per line):
 
 ```
 https://www.instagram.com/username1
@@ -149,7 +162,8 @@ https://instagram.com/username3
 - Only use **public** profiles (not private accounts)
 - Use the profile URL, not individual post URLs
 - One URL per line
-- No trailing spaces
+- Lines starting with `#` are comments (ignored)
+- Leave files empty or delete them to skip that niche
 
 ### 3.2 Verify Project Structure
 
@@ -159,8 +173,12 @@ Your folder should look like this:
 instaToDrive/
 ├── main.py
 ├── client_secrets.json
-├── links.txt
-└── README.md (optional)
+├── links_niche1.txt      ← Niche 1 profiles
+├── links_niche2.txt      ← Niche 2 profiles
+├── links_niche3.txt      ← Niche 3 profiles
+├── links_niche4.txt      ← Niche 4 profiles
+├── links_niche5.txt      ← Niche 5 profiles
+└── README.md
 ```
 
 ---
@@ -169,33 +187,40 @@ instaToDrive/
 
 Open `main.py` and review these settings:
 
-### Basic Settings (Usually No Changes Needed)
+### Niche Configuration
+
+Each niche has its own settings in the `NICHES` dictionary:
 
 ```python
-USE_LOGIN = False  # Keep False for public profiles
+NICHES = {
+    "niche1": {
+        "links_file": "links_niche1.txt",
+        "output_csv": "reels_niche1.csv",
+        "processed_file": "processed_niche1.txt",
+        "failed_file": "failed_niche1.txt",
+        "drive_folder": "niche1_reels",  # Google Drive folder name
+    },
+    # ... niche2 through niche5
+}
 ```
 
-### Optional: Adjust Performance
+### Timing Configuration
 
 ```python
-THREADS = 6    # Number of parallel downloads (reduce if getting errors)
-RETRIES = 3    # Number of retry attempts per video
+NICHE_DELAY_HOURS = 1  # Wait 1 hour between each niche
 ```
 
 ### Optional: Enable Instagram Login
 
-Only if you need to:
-- Access more content
-- Reduce rate limiting
-- Access private profiles you follow
+Recommended for better rate limits:
 
 ```python
 USE_LOGIN = True
-USERNAME = "your_instagram_username"
-PASSWORD = "your_instagram_password"
+USERNAME = "your_burner_account"  # Use a burner account!
+PASSWORD = "your_password"
 ```
 
-⚠️ **Warning**: Using login may risk your Instagram account being flagged.
+⚠️ **Warning**: Use a burner Instagram account with no posting activity.
 
 ---
 
@@ -214,7 +239,17 @@ PASSWORD = "your_instagram_password"
 ### 5.2 Run the Script
 
 ```bash
+# Process all 5 niches with 1-hour delay between each
 python main.py
+
+# Process all niches without delay (for testing)
+python main.py --no-delay
+
+# Process a single niche only
+python main.py --niche=niche1
+
+# Show help
+python main.py --help
 ```
 
 ### 5.3 First Run - Google Authentication
@@ -243,40 +278,107 @@ The script will:
 
 You'll see output like:
 ```
-Running without Instagram login (public profiles only)
-Processed ABC123 -> https://drive.google.com/file/d/xxx/view
-Processed DEF456 -> https://drive.google.com/file/d/yyy/view
+############################################################
+INSTAGRAM TO DRIVE - MULTI-NICHE PROCESSOR
+Processing 5 niches
+Delay between niches: 1 hour(s)
+############################################################
+
+[1/5] Starting niche1 at 2026-01-02 10:00:00
+============================================================
+PROCESSING NICHE: niche1
+Links file: links_niche1.txt
+Drive folder: niche1_reels
+Output CSV: reels_niche1.csv
+============================================================
+Fetching posts from @fitness_account1...
+
+[1/10] Processing fitness_account1/ABC123
+[001] fitness_account1/001_fitness_account1_ABC123.mp4 -> https://drive.usercontent.google.com/download?id=xxx
+
+Completed niche1: 10 videos processed
+⏰ Waiting 1 hour(s) before processing niche2...
+Next niche will start at: 2026-01-02 11:00:00
 ```
+
+---
+
+## 🎯 Multi-Niche System
+
+### How It Works
+
+1. **5 Separate Niches** - Each niche has its own input/output files
+2. **Scheduled Processing** - 1-hour delay between niches (avoids rate limits)
+3. **Separate Tracking** - Each niche tracks processed posts independently
+4. **Niche-Based Folders** - All videos from a niche go to one Drive folder
+
+### File Structure Per Niche
+
+| Niche | Input | Output CSV | Processed | Failed | Drive Folder |
+|-------|-------|-----------|-----------|--------|--------------|
+| niche1 | `links_niche1.txt` | `reels_niche1.csv` | `processed_niche1.txt` | `failed_niche1.txt` | `niche1_reels` |
+| niche2 | `links_niche2.txt` | `reels_niche2.csv` | `processed_niche2.txt` | `failed_niche2.txt` | `niche2_reels` |
+| niche3 | `links_niche3.txt` | `reels_niche3.csv` | `processed_niche3.txt` | `failed_niche3.txt` | `niche3_reels` |
+| niche4 | `links_niche4.txt` | `reels_niche4.csv` | `processed_niche4.txt` | `failed_niche4.txt` | `niche4_reels` |
+| niche5 | `links_niche5.txt` | `reels_niche5.csv` | `processed_niche5.txt` | `failed_niche5.txt` | `niche5_reels` |
+
+### Command Line Options
+
+| Command | Description |
+|---------|-------------|
+| `python main.py` | Process all niches with 1-hour delay |
+| `python main.py --no-delay` | Process all niches immediately (testing) |
+| `python main.py --niche=niche1` | Process single niche only |
+| `python main.py --help` | Show help message |
 
 ---
 
 ## 📁 Output Files
 
-After running, you'll have:
+After running, you'll have these files **per niche**:
 
 | File | Description |
 |------|-------------|
-| `reels_drive_links.csv` | CSV with video titles and Google Drive links |
-| `processed_posts.txt` | List of processed post IDs (prevents re-downloading) |
+| `reels_niche1.csv` | Pinterest-ready CSV for niche 1 |
+| `processed_niche1.txt` | Processed post IDs (prevents re-downloading) |
+| `failed_niche1.txt` | Failed posts with error messages |
 | `credentials.json` | Auto-generated Google auth token (don't delete) |
 
-### CSV Format
+### CSV Format (Pinterest-Ready)
+
+The CSV includes both tracking columns and Pinterest columns:
 
 ```csv
-"Video Title or Caption","https://drive.google.com/file/d/xxx/view"
-"Another Video","https://drive.google.com/file/d/yyy/view"
+No.,Username,Video Title,Drive Folder,Filename,Drive Link,title,description,link,board,media_url
+1,fitness_user,Great workout video,niche1_reels,001_fitness_user_ABC123.mp4,https://drive.usercontent.google.com/download?id=xxx,Great workout video,#fitness #workout #viral #trending,,,https://drive.usercontent.google.com/download?id=xxx
 ```
+
+| Column | Description |
+|--------|-------------|
+| `No.` | Video number (resets per niche) |
+| `Username` | Instagram username |
+| `Video Title` | Cleaned caption (max 100 chars) |
+| `Drive Folder` | Niche folder name |
+| `Filename` | File in Drive (e.g., `001_user_ABC123.mp4`) |
+| `Drive Link` | Direct download URL |
+| `title` | Pinterest title (emoji-free, max 100 chars) |
+| `description` | Overflow text + hashtags |
+| `link` | Empty (for Pinterest) |
+| `board` | Empty (fill in for Pinterest) |
+| `media_url` | Direct download URL for Pinterest |
 
 ### Google Drive Structure
 
-Videos are organized in folders by username:
+Videos are organized by niche:
 ```
 My Drive/
-├── username1_reels/
-│   ├── video1.mp4
-│   └── video2.mp4
-└── username2_reels/
-    └── video1.mp4
+├── niche1_reels/
+│   ├── 001_fitness_user_ABC123.mp4
+│   └── 002_fitness_user_DEF456.mp4
+├── niche2_reels/
+│   └── 001_food_account_GHI789.mp4
+└── niche3_reels/
+    └── ...
 ```
 
 ---
@@ -285,14 +387,19 @@ My Drive/
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `USE_LOGIN` | `False` | Set `True` to login to Instagram |
-| `USERNAME` | `""` | Instagram username (if login enabled) |
-| `PASSWORD` | `""` | Instagram password (if login enabled) |
-| `THREADS` | `6` | Parallel download threads |
+| `USE_LOGIN` | `True` | Login to Instagram (recommended) |
+| `USERNAME` | `""` | Instagram username (burner account) |
+| `PASSWORD` | `""` | Instagram password |
+| `NICHE_DELAY_HOURS` | `1` | Hours to wait between niches |
 | `RETRIES` | `3` | Retry attempts per failed download |
-| `LINKS_FILE` | `links.txt` | File containing profile URLs |
-| `OUTPUT_CSV` | `reels_drive_links.csv` | Output CSV filename |
-| `PROCESSED_FILE` | `processed_posts.txt` | Tracking file for processed posts |
+| `DEFAULT_HASHTAGS` | `"#viral #trending..."` | Hashtags added to Pinterest description |
+
+### Customizing Niches
+
+Edit the `NICHES` dictionary in `main.py` to:
+- Rename niches (e.g., `"fitness"` instead of `"niche1"`)
+- Change Drive folder names
+- Use different file names
 
 ---
 

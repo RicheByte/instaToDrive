@@ -1,0 +1,6 @@
+# Niche 2 - Example: Food/Recipe accounts
+# Add Instagram profile URLs below (one per line)
+# Example:
+# https://www.instagram.com/food_account1
+# https://www.instagram.com/recipe_account2
+

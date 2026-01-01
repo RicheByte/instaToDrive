@@ -1,0 +1,6 @@
+# Niche 1 - Example: Fitness accounts
+# Add Instagram profile URLs below (one per line)
+# Example:
+# https://www.instagram.com/fitness_account1
+# https://www.instagram.com/fitness_account2
+

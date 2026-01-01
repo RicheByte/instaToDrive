@@ -6,6 +6,8 @@ import csv
 import time
 import random
 import glob
+import re
+import unicodedata
 
 # Simple counter for video numbering (sequential processing)
 video_counter = 0
@@ -71,6 +73,7 @@ else:
 LINKS_FILE = "links.txt"
 OUTPUT_CSV = "reels_drive_links.csv"
 PROCESSED_FILE = "processed_posts.txt"
+FAILED_FILE = "failed_posts.txt"  # Track failed posts for retry
 RETRIES = 3
 THREADS = 1  # Sequential processing - safer for Drive API
 
@@ -78,14 +81,100 @@ THREADS = 1  # Sequential processing - safer for Drive API
 if not os.path.exists(PROCESSED_FILE):
     open(PROCESSED_FILE, "w").close()
 
+# Ensure failed posts tracking file exists
+if not os.path.exists(FAILED_FILE):
+    open(FAILED_FILE, "w").close()
+
 with open(PROCESSED_FILE, "r") as f:
     processed_posts = set(line.strip() for line in f if line.strip())
+
+# --- Text Normalization ---
+def normalize_text(text):
+    """Clean up text: remove/replace weird characters, normalize Unicode, handle emojis"""
+    if not text:
+        return ""
+    
+    # Normalize Unicode (NFKC normalizes compatibility characters)
+    text = unicodedata.normalize('NFKC', text)
+    
+    # Remove zero-width characters and other invisible Unicode
+    text = re.sub(r'[\u200b-\u200f\u2028-\u202f\u205f-\u206f\ufeff]', '', text)
+    
+    # Replace multiple spaces/newlines with single space
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove control characters (except newline for description)
+    text = ''.join(char for char in text if unicodedata.category(char) != 'Cc' or char == '\n')
+    
+    return text.strip()
+
+def remove_emojis(text):
+    """Remove emojis from text (optional - for cleaner titles)"""
+    if not text:
+        return ""
+    
+    # Emoji pattern covering most emoji ranges
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U00002702-\U000027B0"  # dingbats
+        "\U000024C2-\U0001F251"  # enclosed characters
+        "\U0001F900-\U0001F9FF"  # supplemental symbols
+        "\U0001FA00-\U0001FA6F"  # chess symbols
+        "\U0001FA70-\U0001FAFF"  # symbols extended-A
+        "\U00002600-\U000026FF"  # misc symbols
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub('', text).strip()
+
+# --- Pinterest Hashtags ---
+# Default hashtags for video content (customize as needed)
+DEFAULT_HASHTAGS = "#viral #trending #reels #fyp #explore #video #content #instagood #instadaily #foryou"
+
+def format_for_pinterest(caption, drive_link):
+    """Format caption for Pinterest: title (max 100 chars), description (overflow + hashtags)"""
+    caption = normalize_text(caption or "")
+    
+    # Extract existing hashtags from caption
+    existing_hashtags = ' '.join([word for word in caption.split() if word.startswith('#')])
+    # Remove hashtags from main text for cleaner title
+    caption_no_tags = ' '.join([word for word in caption.split() if not word.startswith('#')]).strip()
+    
+    # Clean title (remove emojis for Pinterest compatibility)
+    clean_title = remove_emojis(caption_no_tags)
+    
+    # Pinterest title: max 100 chars
+    if len(clean_title) <= 100:
+        pin_title = clean_title if clean_title else "Check out this video! 🔥"
+        pin_description = ""
+    else:
+        # Split: first 100 chars to title, rest to description
+        pin_title = clean_title[:100].rsplit(' ', 1)[0] + "..."  # Break at word boundary
+        pin_description = clean_title[len(pin_title)-3:].strip()  # Overflow text
+    
+    # Add hashtags to description (keep emojis in description, they're fine there)
+    all_hashtags = existing_hashtags + " " + DEFAULT_HASHTAGS if existing_hashtags else DEFAULT_HASHTAGS
+    if pin_description:
+        pin_description = pin_description + "\n\n" + all_hashtags
+    else:
+        pin_description = all_hashtags
+    
+    return pin_title, pin_description
 
 # Initialize CSV with headers if it doesn't exist
 if not os.path.exists(OUTPUT_CSV):
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link"])
+        writer.writerow([
+            # Original tracking columns
+            "No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link",
+            # Pinterest columns
+            "title", "description", "link", "board", "media_url"
+        ])
 
 # Read profile links
 with open(LINKS_FILE, "r") as f:
@@ -148,6 +237,8 @@ def process_post(args):
     target_folder = f"{username}_reels"
     drive_folder = f"{username}_reels"
     os.makedirs(target_folder, exist_ok=True)
+    
+    last_error = None  # Track last error for failure logging
 
     for attempt in range(RETRIES):
         try:
@@ -164,20 +255,32 @@ def process_post(args):
 
             # === SUCCESS CONFIRMED - NOW WRITE CSV ===
             # Only write CSV after upload + permission success
-            title = post.title if post.title else post.caption or ""
-            # Truncate title if too long
+            full_caption = post.title if post.title else post.caption or ""
+            
+            # Normalize and clean the title
+            title = normalize_text(full_caption)
             if len(title) > 100:
                 title = title[:100] + "..."
+            
+            # Pinterest formatted title and description
+            pin_title, pin_description = format_for_pinterest(full_caption, drive_link)
             
             with open(OUTPUT_CSV, "a", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
+                    # Original tracking columns
                     video_number,           # No.
                     username,               # Username
-                    title.replace('\n', ' '),  # Video Title (single line)
+                    title,                  # Video Title (single line)
                     drive_folder,           # Drive Folder
                     drive_filename,         # Filename in Drive
-                    drive_link              # Drive Link
+                    drive_link,             # Drive Link
+                    # Pinterest columns
+                    pin_title,              # title (Pinterest)
+                    pin_description,        # description (Pinterest) - overflow + hashtags
+                    "",                     # link (empty)
+                    "",                     # board (empty)
+                    drive_link              # media_url (direct download link)
                 ])
 
             # Mark as processed
@@ -189,11 +292,17 @@ def process_post(args):
                 os.remove(local_file)
 
             print(f"[{video_number:03d}] {username}/{drive_filename} -> {drive_link}")
-            break  # success, exit retry loop
+            return  # success, exit function
 
         except Exception as e:
+            last_error = str(e)
             print(f"[{video_number:03d}] Attempt {attempt+1} failed for {post.shortcode}: {e}")
             time.sleep(2)  # small delay before retry
+    
+    # === ALL RETRIES FAILED - LOG TO FAILED FILE ===
+    print(f"[{video_number:03d}] FAILED permanently: {username}/{post.shortcode}")
+    with open(FAILED_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{username},{post.shortcode},{last_error}\n")
 
 # --- Collect all video posts ---
 all_videos = []

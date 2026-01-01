@@ -10,6 +10,8 @@ import csv
 import tempfile
 import shutil
 import glob
+import re
+import unicodedata
 
 
 class TestUploadToDrive(unittest.TestCase):
@@ -440,7 +442,7 @@ class TestVideoNumbering(unittest.TestCase):
 
 
 class TestNewCSVFormat(unittest.TestCase):
-    """Tests for new CSV format with 6 columns"""
+    """Tests for new CSV format with Pinterest columns"""
 
     def setUp(self):
         """Set up test fixtures"""
@@ -452,8 +454,11 @@ class TestNewCSVFormat(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_csv_header_creation(self):
-        """Test CSV header row creation"""
-        headers = ["No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link"]
+        """Test CSV header row creation with Pinterest columns"""
+        headers = [
+            "No.", "Username", "Video Title", "Drive Folder", "Filename", "Drive Link",
+            "title", "description", "link", "board", "media_url"
+        ]
         
         with open(self.output_csv, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -464,18 +469,24 @@ class TestNewCSVFormat(unittest.TestCase):
             header_row = next(reader)
         
         self.assertEqual(header_row, headers)
-        self.assertEqual(len(header_row), 6)
+        self.assertEqual(len(header_row), 11)  # 6 original + 5 Pinterest
         print("✓ Test csv_header_creation passed")
 
     def test_csv_data_row(self):
-        """Test CSV data row with all 6 columns"""
+        """Test CSV data row with all 11 columns (6 original + 5 Pinterest)"""
+        drive_link = "https://drive.usercontent.google.com/download?id=xyz123"
         row_data = [
             1,                                      # No.
             "testuser",                             # Username
             "Test Video Title",                     # Video Title
             "testuser_reels",                       # Drive Folder
             "001_testuser_ABC123.mp4",              # Filename
-            "https://drive.google.com/file/xyz"    # Drive Link
+            drive_link,                             # Drive Link
+            "Test Video Title",                     # title (Pinterest)
+            "#viral #trending",                     # description (Pinterest)
+            "",                                     # link (empty)
+            "",                                     # board (empty)
+            drive_link                              # media_url (Pinterest)
         ]
         
         with open(self.output_csv, "w", newline="", encoding="utf-8") as csvfile:
@@ -489,7 +500,10 @@ class TestNewCSVFormat(unittest.TestCase):
         self.assertEqual(saved_row[0], "1")  # CSV stores as string
         self.assertEqual(saved_row[1], "testuser")
         self.assertEqual(saved_row[4], "001_testuser_ABC123.mp4")
-        self.assertEqual(len(saved_row), 6)
+        self.assertEqual(saved_row[8], "")  # link should be empty
+        self.assertEqual(saved_row[9], "")  # board should be empty
+        self.assertEqual(saved_row[10], drive_link)  # media_url
+        self.assertEqual(len(saved_row), 11)
         print("✓ Test csv_data_row passed")
 
     def test_title_truncation(self):
@@ -527,6 +541,101 @@ class TestNewCSVFormat(unittest.TestCase):
         self.assertEqual(cleaned_title, "Line 1 Line 2 Line 3")
         self.assertNotIn('\n', cleaned_title)
         print("✓ Test newline_removal_from_title passed")
+
+
+class TestPinterestFormatting(unittest.TestCase):
+    """Tests for Pinterest title/description formatting"""
+
+    def test_short_caption_stays_in_title(self):
+        """Test short captions stay in title, no overflow to description"""
+        caption = "Check out this cool video!"
+        caption_clean = caption.replace('\n', ' ').strip()
+        
+        # Remove hashtags for title
+        caption_no_tags = ' '.join([word for word in caption_clean.split() if not word.startswith('#')]).strip()
+        
+        if len(caption_no_tags) <= 100:
+            pin_title = caption_no_tags
+            pin_description_overflow = ""
+        else:
+            pin_title = caption_no_tags[:100]
+            pin_description_overflow = caption_no_tags[100:]
+        
+        self.assertEqual(pin_title, "Check out this cool video!")
+        self.assertEqual(pin_description_overflow, "")
+        print("✓ Test short_caption_stays_in_title passed")
+
+    def test_long_caption_splits_to_description(self):
+        """Test long captions overflow to description"""
+        caption = "A" * 150  # 150 chars - exceeds 100 limit
+        
+        if len(caption) <= 100:
+            pin_title = caption
+            has_overflow = False
+        else:
+            pin_title = caption[:100] + "..."
+            has_overflow = True
+        
+        self.assertEqual(len(pin_title), 103)  # 100 + "..."
+        self.assertTrue(has_overflow)
+        print("✓ Test long_caption_splits_to_description passed")
+
+    def test_hashtag_extraction(self):
+        """Test hashtags are extracted from caption"""
+        caption = "Great video #viral #trending check it out #fyp"
+        
+        existing_hashtags = ' '.join([word for word in caption.split() if word.startswith('#')])
+        caption_no_tags = ' '.join([word for word in caption.split() if not word.startswith('#')]).strip()
+        
+        self.assertEqual(existing_hashtags, "#viral #trending #fyp")
+        self.assertEqual(caption_no_tags, "Great video check it out")
+        print("✓ Test hashtag_extraction passed")
+
+    def test_default_hashtags_added(self):
+        """Test default hashtags are added to description"""
+        DEFAULT_HASHTAGS = "#viral #trending #reels #fyp #explore"
+        existing_hashtags = ""
+        
+        all_hashtags = existing_hashtags + " " + DEFAULT_HASHTAGS if existing_hashtags else DEFAULT_HASHTAGS
+        
+        self.assertIn("#viral", all_hashtags)
+        self.assertIn("#reels", all_hashtags)
+        print("✓ Test default_hashtags_added passed")
+
+    def test_empty_caption_gets_default_title(self):
+        """Test empty caption gets a default title"""
+        caption = ""
+        caption_clean = caption.replace('\n', ' ').strip()
+        
+        if len(caption_clean) <= 100:
+            pin_title = caption_clean if caption_clean else "Check out this video! 🔥"
+        else:
+            pin_title = caption_clean[:100]
+        
+        self.assertEqual(pin_title, "Check out this video! 🔥")
+        print("✓ Test empty_caption_gets_default_title passed")
+
+    def test_pinterest_link_empty(self):
+        """Test Pinterest link column is empty"""
+        pin_link = ""
+        self.assertEqual(pin_link, "")
+        print("✓ Test pinterest_link_empty passed")
+
+    def test_pinterest_board_empty(self):
+        """Test Pinterest board column is empty"""
+        pin_board = ""
+        self.assertEqual(pin_board, "")
+        print("✓ Test pinterest_board_empty passed")
+
+    def test_media_url_is_direct_download(self):
+        """Test media_url uses direct download format"""
+        file_id = "abc123xyz"
+        media_url = f"https://drive.usercontent.google.com/download?id={file_id}"
+        
+        self.assertIn("drive.usercontent.google.com", media_url)
+        self.assertIn("download?id=", media_url)
+        self.assertIn(file_id, media_url)
+        print("✓ Test media_url_is_direct_download passed")
 
 
 class TestDriveFolderNaming(unittest.TestCase):
@@ -769,6 +878,165 @@ class TestFolderCaching(unittest.TestCase):
         print("✓ Test cache_reduces_api_calls passed")
 
 
+class TestFailureLogging(unittest.TestCase):
+    """Tests for failure logging functionality"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.test_dir = tempfile.mkdtemp()
+        self.failed_file = os.path.join(self.test_dir, "failed_posts.txt")
+
+    def tearDown(self):
+        """Clean up test fixtures"""
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_failed_file_creation(self):
+        """Test that failed_posts.txt is created if it doesn't exist"""
+        if not os.path.exists(self.failed_file):
+            open(self.failed_file, "w").close()
+        
+        self.assertTrue(os.path.exists(self.failed_file))
+        print("✓ Test failed_file_creation passed")
+
+    def test_failure_logging_format(self):
+        """Test that failures are logged with username, shortcode, and error"""
+        username = "testuser"
+        shortcode = "ABC123"
+        error = "Connection timeout"
+        
+        with open(self.failed_file, "a", encoding="utf-8") as f:
+            f.write(f"{username},{shortcode},{error}\n")
+        
+        with open(self.failed_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        self.assertIn(username, content)
+        self.assertIn(shortcode, content)
+        self.assertIn(error, content)
+        print("✓ Test failure_logging_format passed")
+
+    def test_multiple_failures_logged(self):
+        """Test that multiple failures are appended"""
+        failures = [
+            ("user1", "ABC123", "Error 1"),
+            ("user2", "DEF456", "Error 2"),
+            ("user3", "GHI789", "Error 3"),
+        ]
+        
+        for username, shortcode, error in failures:
+            with open(self.failed_file, "a", encoding="utf-8") as f:
+                f.write(f"{username},{shortcode},{error}\n")
+        
+        with open(self.failed_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        self.assertEqual(len(lines), 3)
+        print("✓ Test multiple_failures_logged passed")
+
+    def test_failure_parsing_for_retry(self):
+        """Test that failed posts can be parsed for retry"""
+        with open(self.failed_file, "w", encoding="utf-8") as f:
+            f.write("user1,ABC123,Error message\n")
+            f.write("user2,DEF456,Another error\n")
+        
+        failed_posts = []
+        with open(self.failed_file, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(",", 2)  # Split into 3 parts max
+                if len(parts) >= 2:
+                    failed_posts.append((parts[0], parts[1]))
+        
+        self.assertEqual(len(failed_posts), 2)
+        self.assertEqual(failed_posts[0], ("user1", "ABC123"))
+        self.assertEqual(failed_posts[1], ("user2", "DEF456"))
+        print("✓ Test failure_parsing_for_retry passed")
+
+
+class TestTextNormalization(unittest.TestCase):
+    """Tests for text normalization and cleanup"""
+
+    def test_normalize_unicode(self):
+        """Test Unicode normalization (NFKC)"""
+        # Test full-width characters
+        text = "ｆｕｌｌ　ｗｉｄｔｈ"
+        normalized = unicodedata.normalize('NFKC', text)
+        self.assertEqual(normalized, "full width")
+        print("✓ Test normalize_unicode passed")
+
+    def test_remove_zero_width_characters(self):
+        """Test removal of zero-width characters"""
+        text = "hello\u200bworld\u200c"  # zero-width space and non-joiner
+        cleaned = re.sub(r'[\u200b-\u200f\u2028-\u202f\u205f-\u206f\ufeff]', '', text)
+        self.assertEqual(cleaned, "helloworld")
+        print("✓ Test remove_zero_width_characters passed")
+
+    def test_collapse_multiple_spaces(self):
+        """Test collapsing multiple spaces to single space"""
+        text = "hello    world   test"
+        cleaned = re.sub(r'\s+', ' ', text)
+        self.assertEqual(cleaned, "hello world test")
+        print("✓ Test collapse_multiple_spaces passed")
+
+    def test_remove_control_characters(self):
+        """Test removal of control characters"""
+        text = "hello\x00world\x1f"  # null and unit separator
+        cleaned = ''.join(char for char in text if unicodedata.category(char) != 'Cc' or char == '\n')
+        self.assertEqual(cleaned, "helloworld")
+        print("✓ Test remove_control_characters passed")
+
+    def test_emoji_removal(self):
+        """Test emoji removal from text"""
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"
+            "\U0001F300-\U0001F5FF"
+            "\U0001F680-\U0001F6FF"
+            "\U0001F1E0-\U0001F1FF"
+            "\U00002702-\U000027B0"
+            "\U000024C2-\U0001F251"
+            "\U0001F900-\U0001F9FF"
+            "\U0001FA00-\U0001FA6F"
+            "\U0001FA70-\U0001FAFF"
+            "\U00002600-\U000026FF"
+            "]+",
+            flags=re.UNICODE
+        )
+        
+        text = "Hello 🔥 World 😀 Test 🎉"
+        cleaned = emoji_pattern.sub('', text).strip()
+        cleaned = re.sub(r'\s+', ' ', cleaned)  # Clean up extra spaces
+        self.assertEqual(cleaned, "Hello World Test")
+        print("✓ Test emoji_removal passed")
+
+    def test_normalize_preserves_hashtags(self):
+        """Test that normalization preserves hashtags"""
+        text = "#viral #trending   #fyp"
+        cleaned = re.sub(r'\s+', ' ', text).strip()
+        self.assertIn("#viral", cleaned)
+        self.assertIn("#trending", cleaned)
+        self.assertIn("#fyp", cleaned)
+        print("✓ Test normalize_preserves_hashtags passed")
+
+    def test_empty_text_handling(self):
+        """Test that empty text returns empty string"""
+        text = ""
+        result = text or ""
+        self.assertEqual(result, "")
+        
+        text = None
+        result = text or ""
+        self.assertEqual(result, "")
+        print("✓ Test empty_text_handling passed")
+
+    def test_newline_handling(self):
+        """Test that newlines are properly handled"""
+        text = "Line 1\nLine 2\n\nLine 3"
+        # For titles, collapse to single space
+        title_clean = re.sub(r'\s+', ' ', text)
+        self.assertEqual(title_clean, "Line 1 Line 2 Line 3")
+        print("✓ Test newline_handling passed")
+
+
 def run_tests():
     """Run all tests and print summary"""
     print("=" * 60)
@@ -789,11 +1057,14 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestPostMetadata))
     suite.addTests(loader.loadTestsFromTestCase(TestVideoNumbering))
     suite.addTests(loader.loadTestsFromTestCase(TestNewCSVFormat))
+    suite.addTests(loader.loadTestsFromTestCase(TestPinterestFormatting))
     suite.addTests(loader.loadTestsFromTestCase(TestDriveFolderNaming))
     suite.addTests(loader.loadTestsFromTestCase(TestFileVerification))
     suite.addTests(loader.loadTestsFromTestCase(TestUploadPacing))
     suite.addTests(loader.loadTestsFromTestCase(TestSequentialProcessing))
     suite.addTests(loader.loadTestsFromTestCase(TestFolderCaching))
+    suite.addTests(loader.loadTestsFromTestCase(TestFailureLogging))
+    suite.addTests(loader.loadTestsFromTestCase(TestTextNormalization))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

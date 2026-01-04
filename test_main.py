@@ -14,8 +14,8 @@ import re
 import unicodedata
 
 
-class TestUploadToDrive(unittest.TestCase):
-    """Tests for upload_to_drive function logic (without pydrive dependency)"""
+class TestUploadToR2(unittest.TestCase):
+    """Tests for upload_to_r2 function logic (Cloudflare R2 via boto3)"""
 
     def setUp(self):
         """Set up test fixtures"""
@@ -29,128 +29,97 @@ class TestUploadToDrive(unittest.TestCase):
         """Clean up test fixtures"""
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_folder_cache_hit(self):
-        """Test that cached folder IDs are reused"""
-        folder_id_cache = {}
-        folder_name = "test_user_reels"
+    def test_r2_public_link_format(self):
+        """Test that R2 public links use the correct format"""
+        R2_PUBLIC_DOMAIN = "https://pub-abc123xyz.r2.dev"
+        niche_folder = "niche1_reels"
+        filename = "001_testuser_ABC123.mp4"
         
-        # Simulate caching a folder ID
-        folder_id_cache[folder_name] = "cached_folder_123"
+        # R2 uses path-based keys
+        r2_key = f"{niche_folder}/{filename}"
+        direct_link = f"{R2_PUBLIC_DOMAIN}/{r2_key}"
         
-        # Test cache hit
-        if folder_name in folder_id_cache:
-            folder_id = folder_id_cache[folder_name]
-        else:
-            folder_id = None
-        
-        self.assertEqual(folder_id, "cached_folder_123")
-        print("✓ Test folder_cache_hit passed")
+        self.assertIn("r2.dev", direct_link)
+        self.assertIn(niche_folder, direct_link)
+        self.assertIn(filename, direct_link)
+        self.assertEqual(direct_link, "https://pub-abc123xyz.r2.dev/niche1_reels/001_testuser_ABC123.mp4")
+        print("✓ Test r2_public_link_format passed")
 
-    def test_folder_cache_miss_existing_folder(self):
-        """Test cache miss with existing folder in Drive"""
-        folder_id_cache = {}
-        mock_drive = MagicMock()
-        folder_name = "test_user_reels"
+    def test_r2_key_generation(self):
+        """Test R2 key (path) generation from niche folder and filename"""
+        niche_folder_name = "niche2_reels"
+        video_number = 42
+        username = "cooluser"
+        shortcode = "XYZ789"
         
-        # Mock existing folder in Drive
-        mock_folder = {'id': 'existing_folder_456'}
-        mock_list_file = MagicMock()
-        mock_list_file.GetList.return_value = [mock_folder]
-        mock_drive.ListFile.return_value = mock_list_file
+        # Simulate upload_to_r2 key generation
+        r2_key = f"{niche_folder_name}/{video_number:03d}_{username}_{shortcode}.mp4"
+        r2_filename = os.path.basename(r2_key)
         
-        # Simulate get_or_create_folder logic
-        if folder_name in folder_id_cache:
-            folder_id = folder_id_cache[folder_name]
-        else:
-            folder_list = mock_drive.ListFile({'q': f"title='{folder_name}'"}).GetList()
-            if folder_list:
-                folder_id = folder_list[0]['id']
-            else:
-                folder_id = None
-            folder_id_cache[folder_name] = folder_id
-        
-        self.assertEqual(folder_id, 'existing_folder_456')
-        self.assertIn(folder_name, folder_id_cache)
-        print("✓ Test folder_cache_miss_existing_folder passed")
+        self.assertEqual(r2_key, "niche2_reels/042_cooluser_XYZ789.mp4")
+        self.assertEqual(r2_filename, "042_cooluser_XYZ789.mp4")
+        print("✓ Test r2_key_generation passed")
 
-    def test_folder_cache_miss_create_new(self):
-        """Test cache miss requiring new folder creation"""
-        folder_id_cache = {}
-        mock_drive = MagicMock()
-        folder_name = "new_user_reels"
+    def test_r2_no_folder_creation_needed(self):
+        """Test that R2 does not require explicit folder creation (uses key prefixes)"""
+        # R2 uses flat object storage with key prefixes acting as "folders"
+        # No folder creation API calls needed - just upload with the key
+        niche_folder = "niche1_reels"
+        filename = "001_user_ABC.mp4"
         
-        # Mock empty folder list (folder doesn't exist)
-        mock_list_file = MagicMock()
-        mock_list_file.GetList.return_value = []
-        mock_drive.ListFile.return_value = mock_list_file
+        r2_key = f"{niche_folder}/{filename}"
         
-        # Mock folder creation
-        mock_new_folder = MagicMock()
-        mock_new_folder.__getitem__ = Mock(return_value='new_folder_789')
-        mock_drive.CreateFile.return_value = mock_new_folder
-        
-        # Simulate get_or_create_folder logic
-        if folder_name in folder_id_cache:
-            folder_id = folder_id_cache[folder_name]
-        else:
-            folder_list = mock_drive.ListFile({'q': f"title='{folder_name}'"}).GetList()
-            if folder_list:
-                folder_id = folder_list[0]['id']
-            else:
-                folder_metadata = {'title': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
-                folder = mock_drive.CreateFile(folder_metadata)
-                folder.Upload()
-                folder_id = folder['id']
-            folder_id_cache[folder_name] = folder_id
-        
-        self.assertEqual(folder_id, 'new_folder_789')
-        self.assertIn(folder_name, folder_id_cache)
-        mock_drive.CreateFile.assert_called_once()
-        print("✓ Test folder_cache_miss_create_new passed")
+        # Key should contain the "folder" as a prefix
+        self.assertTrue(r2_key.startswith(niche_folder + "/"))
+        self.assertIn("/", r2_key)
+        print("✓ Test r2_no_folder_creation_needed passed")
 
-    def test_direct_download_link_format(self):
-        """Test that direct download links use the correct format"""
-        file_id = "1ABC123xyz"
+    def test_r2_content_type_for_video(self):
+        """Test that video uploads use correct content type"""
+        # Critical for Pinterest to recognize the file as video
+        expected_content_type = "video/mp4"
+        extra_args = {'ContentType': 'video/mp4'}
         
-        # This is the format we should use (not alternateLink)
-        direct_link = f"https://drive.usercontent.google.com/download?id={file_id}"
-        
-        self.assertIn("drive.usercontent.google.com", direct_link)
-        self.assertIn("download?id=", direct_link)
-        self.assertIn(file_id, direct_link)
-        self.assertNotIn("alternateLink", direct_link)
-        print("✓ Test direct_download_link_format passed")
+        self.assertEqual(extra_args['ContentType'], expected_content_type)
+        print("✓ Test r2_content_type_for_video passed")
 
-    def test_file_upload_with_direct_link(self):
-        """Test file upload returns direct download link"""
-        mock_drive = MagicMock()
-        mock_gfile = MagicMock()
-        mock_gfile.__getitem__ = Mock(return_value='file_id_123')
-        mock_drive.CreateFile.return_value = mock_gfile
+    def test_r2_upload_with_mock(self):
+        """Test R2 upload logic with mocked boto3 client"""
+        mock_s3_client = MagicMock()
         
-        # Simulate upload logic
-        folder_id = 'folder_123'
+        # Simulate upload_to_r2 logic
+        R2_PUBLIC_DOMAIN = "https://pub-test123.r2.dev"
+        R2_BUCKET_NAME = "pinterest-reels"
+        niche_folder_name = "niche1_reels"
+        video_number = 5
+        username = "testuser"
+        shortcode = "ABC123"
         local_file = self.test_file
         
-        gfile = mock_drive.CreateFile({
-            'parents': [{'id': folder_id}], 
-            'title': os.path.basename(local_file)
-        })
-        gfile.SetContentFile(local_file)
-        gfile.Upload()
-        gfile.InsertPermission({'type': 'anyone', 'value': 'anyone', 'role': 'reader'})
+        r2_key = f"{niche_folder_name}/{video_number:03d}_{username}_{shortcode}.mp4"
+        r2_filename = os.path.basename(r2_key)
         
-        # Build direct download link
-        file_id = gfile['id']
-        direct_link = f"https://drive.usercontent.google.com/download?id={file_id}"
+        # Simulate upload call
+        mock_s3_client.upload_file(
+            local_file,
+            R2_BUCKET_NAME,
+            r2_key,
+            ExtraArgs={'ContentType': 'video/mp4'}
+        )
         
-        # Verify calls
-        gfile.SetContentFile.assert_called_once_with(local_file)
-        gfile.Upload.assert_called_once()
-        gfile.InsertPermission.assert_called_once()
+        direct_link = f"{R2_PUBLIC_DOMAIN}/{r2_key}"
         
-        self.assertEqual(direct_link, 'https://drive.usercontent.google.com/download?id=file_id_123')
-        print("✓ Test file_upload_with_direct_link passed")
+        # Verify upload was called correctly
+        mock_s3_client.upload_file.assert_called_once_with(
+            local_file,
+            R2_BUCKET_NAME,
+            r2_key,
+            ExtraArgs={'ContentType': 'video/mp4'}
+        )
+        
+        self.assertEqual(direct_link, "https://pub-test123.r2.dev/niche1_reels/005_testuser_ABC123.mp4")
+        self.assertEqual(r2_filename, "005_testuser_ABC123.mp4")
+        print("✓ Test r2_upload_with_mock passed")
 
 
 class TestProcessPost(unittest.TestCase):
@@ -474,19 +443,19 @@ class TestNewCSVFormat(unittest.TestCase):
 
     def test_csv_data_row(self):
         """Test CSV data row with all 11 columns (6 original + 5 Pinterest)"""
-        drive_link = "https://drive.usercontent.google.com/download?id=xyz123"
+        r2_link = "https://pub-abc123.r2.dev/niche1_reels/001_testuser_ABC123.mp4"
         row_data = [
             1,                                      # No.
             "testuser",                             # Username
             "Test Video Title",                     # Video Title
-            "testuser_reels",                       # Drive Folder
+            "niche1_reels",                         # R2 Folder (niche-based)
             "001_testuser_ABC123.mp4",              # Filename
-            drive_link,                             # Drive Link
+            r2_link,                                # R2 Link
             "Test Video Title",                     # title (Pinterest)
             "#viral #trending",                     # description (Pinterest)
             "",                                     # link (empty)
             "",                                     # board (empty)
-            drive_link                              # media_url (Pinterest)
+            r2_link                                 # media_url (Pinterest)
         ]
         
         with open(self.output_csv, "w", newline="", encoding="utf-8") as csvfile:
@@ -502,7 +471,8 @@ class TestNewCSVFormat(unittest.TestCase):
         self.assertEqual(saved_row[4], "001_testuser_ABC123.mp4")
         self.assertEqual(saved_row[8], "")  # link should be empty
         self.assertEqual(saved_row[9], "")  # board should be empty
-        self.assertEqual(saved_row[10], drive_link)  # media_url
+        self.assertEqual(saved_row[10], r2_link)  # media_url (R2 direct link)
+        self.assertIn("r2.dev", saved_row[10])  # Verify R2 domain
         self.assertEqual(len(saved_row), 11)
         print("✓ Test csv_data_row passed")
 
@@ -627,36 +597,38 @@ class TestPinterestFormatting(unittest.TestCase):
         self.assertEqual(pin_board, "")
         print("✓ Test pinterest_board_empty passed")
 
-    def test_media_url_is_direct_download(self):
-        """Test media_url uses direct download format"""
-        file_id = "abc123xyz"
-        media_url = f"https://drive.usercontent.google.com/download?id={file_id}"
+    def test_media_url_is_r2_direct_link(self):
+        """Test media_url uses R2 direct link format"""
+        R2_PUBLIC_DOMAIN = "https://pub-abc123.r2.dev"
+        r2_key = "niche1_reels/001_user_ABC123.mp4"
+        media_url = f"{R2_PUBLIC_DOMAIN}/{r2_key}"
         
-        self.assertIn("drive.usercontent.google.com", media_url)
-        self.assertIn("download?id=", media_url)
-        self.assertIn(file_id, media_url)
-        print("✓ Test media_url_is_direct_download passed")
+        self.assertIn("r2.dev", media_url)
+        self.assertIn("niche1_reels", media_url)
+        self.assertTrue(media_url.endswith(".mp4"))
+        print("✓ Test media_url_is_r2_direct_link passed")
 
 
-class TestDriveFolderNaming(unittest.TestCase):
-    """Tests for Drive folder naming convention"""
+class TestR2FolderNaming(unittest.TestCase):
+    """Tests for R2 folder (key prefix) naming convention"""
 
-    def test_folder_name_from_username(self):
-        """Test folder name generation from username"""
-        username = "cooluser"
-        drive_folder = f"{username}_reels"
+    def test_r2_key_prefix_from_niche(self):
+        """Test R2 key prefix generation from niche name"""
+        niche_name = "niche1"
+        r2_folder = f"{niche_name}_reels"
         
-        self.assertEqual(drive_folder, "cooluser_reels")
-        print("✓ Test folder_name_from_username passed")
+        self.assertEqual(r2_folder, "niche1_reels")
+        print("✓ Test r2_key_prefix_from_niche passed")
 
-    def test_folder_name_consistency(self):
-        """Test folder name is consistent between local and drive"""
-        username = "testuser"
-        target_folder = f"{username}_reels"
-        drive_folder = f"{username}_reels"
+    def test_r2_key_prefix_consistency(self):
+        """Test R2 key prefix is consistent between local and R2"""
+        niche_config = {"drive_folder": "niche1_reels"}
+        target_folder = f"{niche_config['drive_folder']}_local"
+        r2_folder = niche_config['drive_folder']
         
-        self.assertEqual(target_folder, drive_folder)
-        print("✓ Test folder_name_consistency passed")
+        self.assertEqual(target_folder, "niche1_reels_local")
+        self.assertEqual(r2_folder, "niche1_reels")
+        print("✓ Test r2_key_prefix_consistency passed")
 
 
 class TestFileVerification(unittest.TestCase):
@@ -808,74 +780,59 @@ class TestSequentialProcessing(unittest.TestCase):
         print("✓ Test sequential_counter_increment passed")
 
 
-class TestFolderCaching(unittest.TestCase):
-    """Tests for folder ID caching system"""
+class TestR2Configuration(unittest.TestCase):
+    """Tests for R2 configuration and setup"""
 
-    def test_cache_empty_initially(self):
-        """Test that folder cache starts empty"""
-        folder_id_cache = {}
-        self.assertEqual(len(folder_id_cache), 0)
-        print("✓ Test cache_empty_initially passed")
-
-    def test_cache_stores_folder_id(self):
-        """Test that folder ID is stored in cache"""
-        folder_id_cache = {}
-        folder_name = "user1_reels"
-        folder_id = "folder_abc123"
-        
-        folder_id_cache[folder_name] = folder_id
-        
-        self.assertIn(folder_name, folder_id_cache)
-        self.assertEqual(folder_id_cache[folder_name], folder_id)
-        print("✓ Test cache_stores_folder_id passed")
-
-    def test_cache_multiple_users(self):
-        """Test caching multiple user folders"""
-        folder_id_cache = {}
-        
-        users = [
-            ("user1_reels", "folder_111"),
-            ("user2_reels", "folder_222"),
-            ("user3_reels", "folder_333"),
+    def test_r2_config_required_fields(self):
+        """Test that R2 config has all required fields"""
+        # These are the required config values for R2
+        required_configs = [
+            "R2_ACCOUNT_ID",
+            "R2_ACCESS_KEY",
+            "R2_SECRET_KEY",
+            "R2_BUCKET_NAME",
+            "R2_PUBLIC_DOMAIN"
         ]
         
-        for folder_name, folder_id in users:
-            folder_id_cache[folder_name] = folder_id
+        # Simulate config (would be imported from main.py)
+        config = {
+            "R2_ACCOUNT_ID": "your_account_id",
+            "R2_ACCESS_KEY": "your_access_key",
+            "R2_SECRET_KEY": "your_secret_key",
+            "R2_BUCKET_NAME": "pinterest-reels",
+            "R2_PUBLIC_DOMAIN": "https://pub-xxxxxxxx.r2.dev"
+        }
         
-        self.assertEqual(len(folder_id_cache), 3)
-        self.assertEqual(folder_id_cache["user2_reels"], "folder_222")
-        print("✓ Test cache_multiple_users passed")
+        for field in required_configs:
+            self.assertIn(field, config)
+        print("✓ Test r2_config_required_fields passed")
 
-    def test_cache_reduces_api_calls(self):
-        """Test that cache prevents repeated API lookups"""
-        folder_id_cache = {}
-        mock_drive = MagicMock()
-        api_call_count = 0
+    def test_r2_endpoint_url_format(self):
+        """Test R2 endpoint URL is correctly formatted"""
+        R2_ACCOUNT_ID = "abc123def456"
+        endpoint_url = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
         
-        def mock_get_or_create_folder(folder_name):
-            nonlocal api_call_count
-            if folder_name in folder_id_cache:
-                return folder_id_cache[folder_name]
-            
-            # This would be an API call
-            api_call_count += 1
-            folder_id = f"folder_{folder_name}"
-            folder_id_cache[folder_name] = folder_id
-            return folder_id
+        self.assertIn("r2.cloudflarestorage.com", endpoint_url)
+        self.assertIn(R2_ACCOUNT_ID, endpoint_url)
+        self.assertTrue(endpoint_url.startswith("https://"))
+        print("✓ Test r2_endpoint_url_format passed")
+
+    def test_r2_public_domain_format(self):
+        """Test R2 public domain follows expected format"""
+        R2_PUBLIC_DOMAIN = "https://pub-abc123xyz.r2.dev"
         
-        # First call should hit API
-        mock_get_or_create_folder("user1_reels")
-        self.assertEqual(api_call_count, 1)
+        self.assertTrue(R2_PUBLIC_DOMAIN.startswith("https://"))
+        self.assertIn("r2.dev", R2_PUBLIC_DOMAIN)
+        print("✓ Test r2_public_domain_format passed")
+
+    def test_r2_bucket_name_valid(self):
+        """Test bucket name is valid (lowercase, no special chars)"""
+        R2_BUCKET_NAME = "pinterest-reels"
         
-        # Second call should use cache
-        mock_get_or_create_folder("user1_reels")
-        self.assertEqual(api_call_count, 1)  # Still 1, not 2
-        
-        # Different user should hit API
-        mock_get_or_create_folder("user2_reels")
-        self.assertEqual(api_call_count, 2)
-        
-        print("✓ Test cache_reduces_api_calls passed")
+        # S3/R2 bucket names must be lowercase and can contain hyphens
+        self.assertEqual(R2_BUCKET_NAME, R2_BUCKET_NAME.lower())
+        self.assertTrue(all(c.isalnum() or c == '-' for c in R2_BUCKET_NAME))
+        print("✓ Test r2_bucket_name_valid passed")
 
 
 class TestFailureLogging(unittest.TestCase):
@@ -891,7 +848,7 @@ class TestFailureLogging(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_failed_file_creation(self):
-        """Test that failed_posts.txt is created if it doesn't exist"""
+        """Test that failed_posts.txt is created if it does not exist"""
         if not os.path.exists(self.failed_file):
             open(self.failed_file, "w").close()
         
@@ -1205,27 +1162,27 @@ class TestNicheScheduling(unittest.TestCase):
         print("✓ Test video_counter_reset_per_niche passed")
 
 
-class TestNicheDriveFolders(unittest.TestCase):
-    """Tests for niche-based Drive folder naming"""
+class TestNicheR2Folders(unittest.TestCase):
+    """Tests for niche-based R2 folder (key prefix) naming"""
 
-    def test_drive_folder_matches_niche(self):
-        """Test Drive folder is named after niche, not username"""
+    def test_r2_folder_matches_niche(self):
+        """Test R2 folder is named after niche, not username"""
         niche_config = {
-            "drive_folder": "niche1_reels"
+            "drive_folder": "niche1_reels"  # drive_folder key reused for R2 prefix
         }
         
-        # All videos from this niche go to the same folder
+        # All videos from this niche go to the same R2 prefix
         username1 = "fitness_user1"
         username2 = "fitness_user2"
         
-        # Both should use niche folder, not username folder
-        drive_folder = niche_config["drive_folder"]
+        # Both should use niche folder prefix, not username
+        r2_folder = niche_config["drive_folder"]
         
-        self.assertEqual(drive_folder, "niche1_reels")
-        self.assertNotEqual(drive_folder, f"{username1}_reels")
-        self.assertNotEqual(drive_folder, f"{username2}_reels")
+        self.assertEqual(r2_folder, "niche1_reels")
+        self.assertNotEqual(r2_folder, f"{username1}_reels")
+        self.assertNotEqual(r2_folder, f"{username2}_reels")
         
-        print("✓ Test drive_folder_matches_niche passed")
+        print("✓ Test r2_folder_matches_niche passed")
 
     def test_local_folder_naming(self):
         """Test local temp folder naming convention"""
@@ -1235,6 +1192,19 @@ class TestNicheDriveFolders(unittest.TestCase):
         
         self.assertEqual(target_folder, "niche1_reels_local")
         print("✓ Test local_folder_naming passed")
+
+    def test_r2_full_key_path(self):
+        """Test full R2 key path generation"""
+        niche_folder = "niche2_reels"
+        video_number = 15
+        username = "creator123"
+        shortcode = "AbCdEf"
+        
+        r2_key = f"{niche_folder}/{video_number:03d}_{username}_{shortcode}.mp4"
+        
+        self.assertEqual(r2_key, "niche2_reels/015_creator123_AbCdEf.mp4")
+        self.assertIn("/", r2_key)  # Has folder separator
+        print("✓ Test r2_full_key_path passed")
 
 
 def run_tests():
@@ -1249,7 +1219,7 @@ def run_tests():
     suite = unittest.TestSuite()
     
     # Add all test classes
-    suite.addTests(loader.loadTestsFromTestCase(TestUploadToDrive))
+    suite.addTests(loader.loadTestsFromTestCase(TestUploadToR2))
     suite.addTests(loader.loadTestsFromTestCase(TestProcessPost))
     suite.addTests(loader.loadTestsFromTestCase(TestFileOperations))
     suite.addTests(loader.loadTestsFromTestCase(TestRetryLogic))
@@ -1258,16 +1228,16 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestVideoNumbering))
     suite.addTests(loader.loadTestsFromTestCase(TestNewCSVFormat))
     suite.addTests(loader.loadTestsFromTestCase(TestPinterestFormatting))
-    suite.addTests(loader.loadTestsFromTestCase(TestDriveFolderNaming))
+    suite.addTests(loader.loadTestsFromTestCase(TestR2FolderNaming))
     suite.addTests(loader.loadTestsFromTestCase(TestFileVerification))
     suite.addTests(loader.loadTestsFromTestCase(TestUploadPacing))
     suite.addTests(loader.loadTestsFromTestCase(TestSequentialProcessing))
-    suite.addTests(loader.loadTestsFromTestCase(TestFolderCaching))
+    suite.addTests(loader.loadTestsFromTestCase(TestR2Configuration))
     suite.addTests(loader.loadTestsFromTestCase(TestFailureLogging))
     suite.addTests(loader.loadTestsFromTestCase(TestTextNormalization))
     suite.addTests(loader.loadTestsFromTestCase(TestNicheConfiguration))
     suite.addTests(loader.loadTestsFromTestCase(TestNicheScheduling))
-    suite.addTests(loader.loadTestsFromTestCase(TestNicheDriveFolders))
+    suite.addTests(loader.loadTestsFromTestCase(TestNicheR2Folders))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

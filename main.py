@@ -1,6 +1,6 @@
 import instaloader
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
+import boto3
+from botocore.exceptions import NoCredentialsError
 import os
 import csv
 import time
@@ -18,37 +18,12 @@ def get_next_video_number():
     video_counter += 1
     return video_counter
 
-# --- Drive Folder Cache ---
-# Cache folder IDs to avoid repeated API calls
-folder_id_cache = {}
-
-def get_or_create_folder(drive, folder_name):
-    """Get folder ID from cache or create folder if needed"""
-    if folder_name in folder_id_cache:
-        return folder_id_cache[folder_name]
-    
-    # Search for existing folder
-    folder_list = drive.ListFile({
-        'q': f"title='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    }).GetList()
-    
-    if folder_list:
-        folder_id = folder_list[0]['id']
-    else:
-        # Create new folder
-        folder_metadata = {'title': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
-        folder = drive.CreateFile(folder_metadata)
-        folder.Upload()
-        folder_id = folder['id']
-    
-    # Cache the folder ID
-    folder_id_cache[folder_name] = folder_id
-    return folder_id
-
-# --- Google Drive Setup ---
-gauth = GoogleAuth()
-gauth.LocalWebserverAuth()  # Opens browser to authenticate
-drive = GoogleDrive(gauth)
+# --- Cloudflare R2 Configuration ---
+R2_ACCOUNT_ID = "your_account_id"
+R2_ACCESS_KEY = "your_access_key"
+R2_SECRET_KEY = "your_secret_key"
+R2_BUCKET_NAME = "pinterest-reels"
+R2_PUBLIC_DOMAIN = "https://pub-xxxxxxxx.r2.dev"  # Found in Bucket Settings -> Public Access
 
 # --- Instaloader Setup ---
 # Login recommended for better rate limits and smoother pipeline
@@ -219,29 +194,47 @@ def find_video_file(target_folder, shortcode):
     
     return None
 
-# Function to upload to Drive with numbered filename
-def upload_to_drive(local_file, drive_folder_name, video_number, username):
-    # Use cached folder ID to reduce API calls
-    folder_id = get_or_create_folder(drive, drive_folder_name)
+# Function to upload to R2 with numbered filename
+def upload_to_r2(local_file, niche_folder_name, video_number, username):
+    """Uploads to Cloudflare R2 and returns a direct public link"""
+    
+    # Initialize S3 client for R2
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+        region_name='auto'
+    )
 
-    # Create numbered filename: 001_username_shortcode.mp4
+    # Create filename: niche1_reels/001_username_shortcode.mp4
     original_name = os.path.basename(local_file)
     shortcode = os.path.splitext(original_name)[0]
-    numbered_filename = f"{video_number:03d}_{username}_{shortcode}.mp4"
     
-    gfile = drive.CreateFile({'parents':[{'id': folder_id}], 'title': numbered_filename})
-    gfile.SetContentFile(local_file)
-    gfile.Upload()
-    gfile.InsertPermission({'type': 'anyone', 'value': 'anyone', 'role': 'reader'})  # Make public
-    
-    # Use direct download link (more reliable for Pinterest ingestion)
-    file_id = gfile['id']
-    direct_link = f"https://drive.usercontent.google.com/download?id={file_id}"
-    
-    # Add pacing delay after upload (2-5 seconds)
-    time.sleep(random.uniform(2, 5))
-    
-    return direct_link, numbered_filename
+    # R2 uses "keys" (paths) instead of folder IDs
+    r2_key = f"{niche_folder_name}/{video_number:03d}_{username}_{shortcode}.mp4"
+    r2_filename = os.path.basename(r2_key)
+
+    try:
+        # Upload
+        s3_client.upload_file(
+            local_file, 
+            R2_BUCKET_NAME, 
+            r2_key,
+            ExtraArgs={'ContentType': 'video/mp4'}  # Critical for Pinterest
+        )
+        
+        # Generate Direct Link
+        direct_link = f"{R2_PUBLIC_DOMAIN}/{r2_key}"
+        
+        # Small delay for propagation
+        time.sleep(1)
+        
+        return direct_link, r2_filename
+
+    except Exception as e:
+        print(f"R2 Upload Failed: {e}")
+        raise e  # Re-raise to trigger the retry logic in process_post
 
 # Function to download + upload a single post with retries
 def process_post(args, niche_config, processed_posts):
@@ -269,8 +262,8 @@ def process_post(args, niche_config, processed_posts):
             if local_file is None:
                 raise FileNotFoundError(f"Video file not found for {post.shortcode}")
 
-            # Upload to Drive with numbering
-            drive_link, drive_filename = upload_to_drive(local_file, drive_folder, video_number, username)
+            # Upload to R2 with numbering
+            drive_link, drive_filename = upload_to_r2(local_file, drive_folder, video_number, username)
 
             # === SUCCESS CONFIRMED - NOW WRITE CSV ===
             # Only write CSV after upload + permission success

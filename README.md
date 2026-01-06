@@ -29,6 +29,7 @@ Automatically download Instagram reels from public profiles and upload them to *
 - ✅ **5 Separate Niches** - Organize different content categories
 - ✅ **Scheduled Processing** - 1-hour delay between niches (configurable)
 - ✅ **Pinterest-Ready CSV** - Direct upload format with title, description, hashtags
+- ✅ **Metadata Stripping** - Removes all fingerprints before upload (FFmpeg)
 - ✅ Download reels from **public** Instagram profiles
 - ✅ **Text normalization** - Cleans weird Unicode, emojis from titles
 - ✅ **Failure logging** - Track failed posts for retry
@@ -42,23 +43,25 @@ Automatically download Instagram reels from public profiles and upload them to *
 
 ### Why We Switched
 
-| Issue with Google Drive | Solution with R2 |
-|------------------------|------------------|
+| Issue with Google Drive                | Solution with R2                                   |
+| -------------------------------------- | -------------------------------------------------- |
 | Wrapper links (`drive.google.com/...`) | Direct raw video URLs (`pub-xxx.r2.dev/video.mp4`) |
-| Pinterest often rejects Drive links | Pinterest accepts R2 direct links perfectly |
-| Requires OAuth authentication flow | Simple API key authentication |
-| Complex folder creation API | No folders needed - uses path prefixes |
-| Rate limits on permission changes | No permission management needed |
+| Pinterest often rejects Drive links    | Pinterest accepts R2 direct links perfectly        |
+| Requires OAuth authentication flow     | Simple API key authentication                      |
+| Complex folder creation API            | No folders needed - uses path prefixes             |
+| Rate limits on permission changes      | No permission management needed                    |
 
 ### What Was Changed in the Code
 
 1. **Removed Google Drive dependencies:**
+
    - Deleted `pydrive` library imports
    - Removed `client_secrets.json` requirement
    - Removed OAuth browser authentication
    - Removed folder ID caching system
 
 2. **Added Cloudflare R2 (via boto3):**
+
    - Uses `boto3` (AWS S3-compatible SDK)
    - Simple credential configuration
    - Direct public URL generation
@@ -73,8 +76,33 @@ Automatically download Instagram reels from public profiles and upload them to *
 ## 📦 Prerequisites
 
 - **Python 3.8+** installed ([Download Python](https://www.python.org/downloads/))
+- **FFmpeg** installed (for metadata stripping) - [Installation Guide](#install-ffmpeg)
 - **Cloudflare Account** (free) for R2 storage
 - **Internet connection**
+
+### Install FFmpeg
+
+**Windows (PowerShell as Admin):**
+
+```powershell
+winget install ffmpeg
+```
+
+**Or download from:** [ffmpeg.org/download](https://ffmpeg.org/download.html)
+
+**macOS:**
+
+```bash
+brew install ffmpeg
+```
+
+**Linux (Ubuntu/Debian):**
+
+```bash
+sudo apt install ffmpeg
+```
+
+> **Note:** FFmpeg enables automatic metadata stripping. Without it, videos upload with original metadata intact.
 
 ### Verify Python Installation
 
@@ -161,13 +189,13 @@ Both packages should be listed.
 
 ### Summary: What You Need
 
-| Item | Example | Where to Find |
-|------|---------|---------------|
-| Account ID | `a1b2c3d4e5f6...` | Dashboard URL or R2 sidebar |
-| Access Key ID | `xxxxxxxx...` | API token creation (step 2.5) |
-| Secret Access Key | `xxxxxxxx...` | API token creation (step 2.5) |
-| Bucket Name | `pinterest-reels` | What you named it (step 2.3) |
-| Public Domain | `https://pub-abc123.r2.dev` | Bucket Settings → Public Access |
+| Item              | Example                     | Where to Find                   |
+| ----------------- | --------------------------- | ------------------------------- |
+| Account ID        | `a1b2c3d4e5f6...`           | Dashboard URL or R2 sidebar     |
+| Access Key ID     | `xxxxxxxx...`               | API token creation (step 2.5)   |
+| Secret Access Key | `xxxxxxxx...`               | API token creation (step 2.5)   |
+| Bucket Name       | `pinterest-reels`           | What you named it (step 2.3)    |
+| Public Domain     | `https://pub-abc123.r2.dev` | Bucket Settings → Public Access |
 
 ---
 
@@ -177,15 +205,16 @@ Both packages should be listed.
 
 Create these files with Instagram profile URLs (one per line):
 
-| File | Purpose |
-|------|---------|
+| File               | Purpose                          |
+| ------------------ | -------------------------------- |
 | `links_niche1.txt` | Niche 1 profiles (e.g., Fitness) |
-| `links_niche2.txt` | Niche 2 profiles (e.g., Food) |
-| `links_niche3.txt` | Niche 3 profiles (e.g., Travel) |
+| `links_niche2.txt` | Niche 2 profiles (e.g., Food)    |
+| `links_niche3.txt` | Niche 3 profiles (e.g., Travel)  |
 | `links_niche4.txt` | Niche 4 profiles (e.g., Fashion) |
-| `links_niche5.txt` | Niche 5 profiles (e.g., DIY) |
+| `links_niche5.txt` | Niche 5 profiles (e.g., DIY)     |
 
 **Example `links_niche1.txt`:**
+
 ```
 https://www.instagram.com/fitness_account1
 https://www.instagram.com/fitness_account2
@@ -193,6 +222,7 @@ https://instagram.com/workout_videos
 ```
 
 **Important:**
+
 - Only use **public** profiles (not private accounts)
 - Use the profile URL, not individual post URLs
 - One URL per line
@@ -260,10 +290,12 @@ PASSWORD = "your_password"
 ### 5.1 Open Terminal in Project Folder
 
 **Windows:**
+
 - Navigate to project folder in File Explorer
 - Click address bar, type `cmd`, press Enter
 
 **Or use VS Code:**
+
 - Open folder in VS Code
 - Press `` Ctrl+` `` to open terminal
 
@@ -323,8 +355,8 @@ Completed niche1: 10 videos processed
 
 ### File Structure Per Niche
 
-| Niche | Input | Output CSV | Processed | Failed | R2 Prefix |
-|-------|-------|-----------|-----------|--------|-----------|
+| Niche  | Input              | Output CSV         | Processed              | Failed              | R2 Prefix       |
+| ------ | ------------------ | ------------------ | ---------------------- | ------------------- | --------------- |
 | niche1 | `links_niche1.txt` | `reels_niche1.csv` | `processed_niche1.txt` | `failed_niche1.txt` | `niche1_reels/` |
 | niche2 | `links_niche2.txt` | `reels_niche2.csv` | `processed_niche2.txt` | `failed_niche2.txt` | `niche2_reels/` |
 | niche3 | `links_niche3.txt` | `reels_niche3.csv` | `processed_niche3.txt` | `failed_niche3.txt` | `niche3_reels/` |
@@ -352,11 +384,11 @@ pinterest-reels (bucket)/
 
 ### Generated Files Per Niche
 
-| File | Description |
-|------|-------------|
-| `reels_niche1.csv` | Pinterest-ready CSV with video links |
+| File                   | Description                                  |
+| ---------------------- | -------------------------------------------- |
+| `reels_niche1.csv`     | Pinterest-ready CSV with video links         |
 | `processed_niche1.txt` | Processed post IDs (prevents re-downloading) |
-| `failed_niche1.txt` | Failed posts with error messages |
+| `failed_niche1.txt`    | Failed posts with error messages             |
 
 ### CSV Format (Pinterest-Ready)
 
@@ -365,19 +397,19 @@ No.,Username,Video Title,Drive Folder,Filename,Drive Link,title,description,link
 1,fitness_user,Great workout,niche1_reels,001_fitness_user_ABC123.mp4,https://pub-xxx.r2.dev/niche1_reels/001_fitness_user_ABC123.mp4,Great workout,#fitness #viral #trending,,,https://pub-xxx.r2.dev/niche1_reels/001_fitness_user_ABC123.mp4
 ```
 
-| Column | Description |
-|--------|-------------|
-| `No.` | Video number (resets per niche) |
-| `Username` | Instagram username |
-| `Video Title` | Cleaned caption (max 100 chars) |
-| `Drive Folder` | R2 prefix/folder name |
-| `Filename` | File name (e.g., `001_user_ABC123.mp4`) |
-| `Drive Link` | Direct R2 URL |
-| `title` | Pinterest title (emoji-free, max 100 chars) |
-| `description` | Overflow text + hashtags |
-| `link` | Empty (for Pinterest) |
-| `board` | Empty (fill in for Pinterest) |
-| `media_url` | Direct R2 URL for Pinterest |
+| Column         | Description                                 |
+| -------------- | ------------------------------------------- |
+| `No.`          | Video number (resets per niche)             |
+| `Username`     | Instagram username                          |
+| `Video Title`  | Cleaned caption (max 100 chars)             |
+| `Drive Folder` | R2 prefix/folder name                       |
+| `Filename`     | File name (e.g., `001_user_ABC123.mp4`)     |
+| `Drive Link`   | Direct R2 URL                               |
+| `title`        | Pinterest title (emoji-free, max 100 chars) |
+| `description`  | Overflow text + hashtags                    |
+| `link`         | Empty (for Pinterest)                       |
+| `board`        | Empty (fill in for Pinterest)               |
+| `media_url`    | Direct R2 URL for Pinterest                 |
 
 ### Using with Pinterest Bulk Upload
 
@@ -392,24 +424,24 @@ No.,Username,Video Title,Drive Folder,Filename,Drive Link,title,description,link
 
 ### R2 Configuration (Required)
 
-| Option | Description |
-|--------|-------------|
-| `R2_ACCOUNT_ID` | Your Cloudflare account ID |
-| `R2_ACCESS_KEY` | R2 API access key |
-| `R2_SECRET_KEY` | R2 API secret key |
-| `R2_BUCKET_NAME` | Your bucket name |
+| Option             | Description                     |
+| ------------------ | ------------------------------- |
+| `R2_ACCOUNT_ID`    | Your Cloudflare account ID      |
+| `R2_ACCESS_KEY`    | R2 API access key               |
+| `R2_SECRET_KEY`    | R2 API secret key               |
+| `R2_BUCKET_NAME`   | Your bucket name                |
 | `R2_PUBLIC_DOMAIN` | Public URL from bucket settings |
 
 ### Script Configuration
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `USE_LOGIN` | `True` | Login to Instagram (recommended) |
-| `USERNAME` | `""` | Instagram username (burner account) |
-| `PASSWORD` | `""` | Instagram password |
-| `NICHE_DELAY_HOURS` | `1` | Hours between niches |
-| `RETRIES` | `3` | Retry attempts per failed download |
-| `DEFAULT_HASHTAGS` | `"#viral #trending..."` | Added to Pinterest description |
+| Option              | Default                 | Description                         |
+| ------------------- | ----------------------- | ----------------------------------- |
+| `USE_LOGIN`         | `True`                  | Login to Instagram (recommended)    |
+| `USERNAME`          | `""`                    | Instagram username (burner account) |
+| `PASSWORD`          | `""`                    | Instagram password                  |
+| `NICHE_DELAY_HOURS` | `1`                     | Hours between niches                |
+| `RETRIES`           | `3`                     | Retry attempts per failed download  |
+| `DEFAULT_HASHTAGS`  | `"#viral #trending..."` | Added to Pinterest description      |
 
 ---
 
@@ -418,6 +450,7 @@ No.,Username,Video Title,Drive Folder,Filename,Drive Link,title,description,link
 ### Error: `No module named 'boto3'`
 
 **Solution:** Install dependencies
+
 ```bash
 pip install boto3
 ```
@@ -425,6 +458,7 @@ pip install boto3
 ### Error: `NoCredentialsError` or `InvalidAccessKeyId`
 
 **Solution:**
+
 - Double-check your `R2_ACCESS_KEY` and `R2_SECRET_KEY`
 - Ensure there are no extra spaces in the values
 - Verify the API token has "Object Read & Write" permission
@@ -432,18 +466,21 @@ pip install boto3
 ### Error: `NoSuchBucket`
 
 **Solution:**
+
 - Verify `R2_BUCKET_NAME` matches exactly (case-sensitive)
 - Ensure the bucket exists in your R2 dashboard
 
 ### Error: `AccessDenied` on upload
 
 **Solution:**
+
 - Check API token permissions include your bucket
 - Verify the token has "Object Read & Write" access
 
 ### Videos upload but URLs don't work
 
 **Solution:**
+
 - Ensure public access is enabled (Step 2.4)
 - Verify `R2_PUBLIC_DOMAIN` starts with `https://pub-`
 - Check the bucket settings show "Public access: Allowed"
@@ -451,6 +488,7 @@ pip install boto3
 ### Error: `Profile not found` / `404`
 
 **Solution:**
+
 - Check the username is correct
 - Ensure the profile is **public**, not private
 - Remove trailing slashes from URLs
@@ -458,6 +496,7 @@ pip install boto3
 ### Error: `Too many requests` / `429 Error`
 
 **Solution:**
+
 - Instagram is rate-limiting you
 - Wait 1-2 hours before running again
 - Enable login for better rate limits
@@ -465,6 +504,7 @@ pip install boto3
 ### R2 Upload Failed: Connection Error
 
 **Solution:**
+
 - Check your internet connection
 - Verify `R2_ACCOUNT_ID` is correct
 - The endpoint URL format should be: `https://{ACCOUNT_ID}.r2.cloudflarestorage.com`
@@ -480,6 +520,7 @@ pip install boto3
 ### Q: Is R2 really free?
 
 **A:** Yes! R2 free tier includes:
+
 - 10 GB storage per month
 - 1 million Class A operations (uploads)
 - 10 million Class B operations (downloads)
@@ -506,6 +547,7 @@ For most users, you'll never exceed the free tier.
 ### Q: Where are my videos stored?
 
 **A:** In your Cloudflare R2 bucket, organized by niche prefix:
+
 - `niche1_reels/001_user_ABC.mp4`
 - `niche2_reels/001_user_XYZ.mp4`
 
@@ -524,6 +566,7 @@ python test_main.py
 ```
 
 Expected output:
+
 ```
 ============================================================
 Running Static Tests for main.py
@@ -580,6 +623,7 @@ R2_PUBLIC_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN")
 Then set environment variables before running:
 
 **Windows (PowerShell):**
+
 ```powershell
 $env:R2_ACCOUNT_ID = "your_account_id"
 $env:R2_ACCESS_KEY = "your_access_key"
@@ -589,6 +633,7 @@ python main.py
 ```
 
 **Linux/Mac:**
+
 ```bash
 export R2_ACCOUNT_ID="your_account_id"
 export R2_ACCESS_KEY="your_access_key"

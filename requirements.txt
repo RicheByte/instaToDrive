@@ -1,2 +1,10 @@
-instaloader
-boto3
+# Instagram to R2 Uploader - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+instaloader>=4.10
+boto3>=1.28
+
+# Note: FFmpeg is also required but installed separately (system package)
+# Windows: winget install ffmpeg
+# macOS: brew install ffmpeg
+# Linux: sudo apt install ffmpeg

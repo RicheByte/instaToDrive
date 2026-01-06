@@ -8,6 +8,8 @@ import random
 import glob
 import re
 import unicodedata
+import subprocess
+import shutil
 from datetime import datetime, timedelta
 
 # Simple counter for video numbering (sequential processing)
@@ -194,6 +196,68 @@ def find_video_file(target_folder, shortcode):
     
     return None
 
+# --- Metadata Stripping ---
+def strip_metadata(input_file):
+    """Remove all metadata from video file using FFmpeg to avoid fingerprinting.
+    
+    Uses -map_metadata -1 to strip ALL metadata (timestamps, software info, etc.)
+    Uses -c copy to avoid re-encoding (fast, lossless quality)
+    """
+    # Check if FFmpeg is available
+    if not shutil.which('ffmpeg'):
+        print("WARNING: FFmpeg not found. Skipping metadata stripping.")
+        print("Install FFmpeg: winget install ffmpeg (Windows) or apt install ffmpeg (Linux)")
+        return input_file
+    
+    # Create output filename
+    base, ext = os.path.splitext(input_file)
+    output_file = f"{base}_clean{ext}"
+    
+    try:
+        # FFmpeg command to strip all metadata
+        # -map_metadata -1: Remove all metadata
+        # -c copy: Stream copy (no re-encoding, fast)
+        # -y: Overwrite output file if exists
+        cmd = [
+            'ffmpeg',
+            '-i', input_file,
+            '-map_metadata', '-1',  # Strip ALL metadata
+            '-c', 'copy',           # No re-encoding (fast, lossless)
+            '-y',                   # Overwrite if exists
+            output_file
+        ]
+        
+        # Run FFmpeg silently
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60  # 60 second timeout
+        )
+        
+        if result.returncode == 0 and os.path.exists(output_file):
+            # Replace original with cleaned version
+            os.remove(input_file)
+            os.rename(output_file, input_file)
+            print(f"    ✓ Metadata stripped successfully")
+            return input_file
+        else:
+            print(f"    ⚠ FFmpeg failed, uploading with metadata")
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            return input_file
+            
+    except subprocess.TimeoutExpired:
+        print(f"    ⚠ FFmpeg timeout, uploading with metadata")
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        return input_file
+    except Exception as e:
+        print(f"    ⚠ Metadata strip error: {e}")
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        return input_file
+
 # Function to upload to R2 with numbered filename
 def upload_to_r2(local_file, niche_folder_name, video_number, username):
     """Uploads to Cloudflare R2 and returns a direct public link"""
@@ -261,6 +325,9 @@ def process_post(args, niche_config, processed_posts):
             local_file = find_video_file(target_folder, post.shortcode)
             if local_file is None:
                 raise FileNotFoundError(f"Video file not found for {post.shortcode}")
+
+            # Strip metadata fingerprints before upload
+            local_file = strip_metadata(local_file)
 
             # Upload to R2 with numbering
             drive_link, drive_filename = upload_to_r2(local_file, drive_folder, video_number, username)
